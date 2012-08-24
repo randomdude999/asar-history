@@ -22,7 +22,7 @@ string dir(char const *name);
 
 string getdecor();
 
-void assemblefile(const char * filename);
+void assemblefile(const char * filename, bool toplevel);
 
 extern const char * thisfilename;
 extern int thisline;
@@ -145,8 +145,10 @@ void resetdllstuff()
 	reseteverything();
 }
 
+static bool expectsNewAPI=false;
 EXPORT bool asar_init()
 {
+	if (!expectsNewAPI) return false;
 	initmathcore();
 	return true;
 }
@@ -154,6 +156,12 @@ EXPORT bool asar_init()
 EXPORT int asar_version()
 {
 	return asarver_maj*10000+asarver_min*100+asarver_bug;
+}
+
+EXPORT int asar_apiversion()
+{
+	expectsNewAPI=true;
+	return 200;
 }
 
 EXPORT bool asar_reset()
@@ -171,22 +179,31 @@ EXPORT void asar_close()
 	deinitmathcore();
 }
 
-EXPORT bool asar_patch(const char * patchloc, char * romdata_, int * romlen_)
+#define maxromsize (16*1024*1024)
+EXPORT bool asar_patch(const char * patchloc, char * romdata_, int buflen, int * romlen_)
 {
-	romdata=(unsigned char*)malloc(16*1024*1024);
+	if (buflen==maxromsize) romdata_r=(unsigned char*)romdata_;
+	else
+	{
+		romdata_r=(unsigned char*)malloc(maxromsize);
+		memcpy(romdata, romdata_, *romlen_);
+	}
+	romdata=(unsigned char*)malloc(maxromsize);
 	memcpy(romdata, romdata_, *romlen_);
 	resetdllstuff();
 	romlen=*romlen_;
+	romlen_r=*romlen_;
 	try
 	{
 		for (pass=0;pass<3;pass++)
 		{
 			initstuff();
-			assemblefile(patchloc);
+			assemblefile(patchloc, true);
 			finishpass();
 		}
 	}
 	catch(errfatal&){}
+	if (buflen<romlen) error<errnull>(pass, "The given buffer is too small to contain the resulting ROM.");
 	if (errored)
 	{
 		free(romdata);
@@ -194,8 +211,13 @@ EXPORT bool asar_patch(const char * patchloc, char * romdata_, int * romlen_)
 	}
 	*romlen_=romlen;
 	memcpy(romdata_, romdata, romlen);
-	free(romdata);
+	if (buflen!=maxromsize) free(romdata);
 	return true;
+}
+
+EXPORT int asar_maxromsize()
+{
+	return maxromsize;
 }
 
 extern unsigned int table[256];

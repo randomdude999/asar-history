@@ -1,23 +1,29 @@
+#if !defined(INTERFACE_CLI) && !defined(INTERFACE_LIB)
+#error Please pick a frontend with -DINTERFACE_CLI or -DINTERFACE_LIB.
+#endif
+
 //#include <map>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include "asar.h"
 #include "libsmw.h"
 #include "libstr.h"
 #include "scapegoat.hpp"
 #include "autoarray.h"
+#include "asar.h"
 
 extern const int asarver_maj=1;
-extern const int asarver_min=2;
-extern const int asarver_bug=6;
+extern const int asarver_min=3;
+extern const int asarver_bug=0;
+
+unsigned const char * romdata_r;
+int romlen_r;
 
 long double math(const char * mystr, const char ** e);
 void initmathcore();
 
 int pass;
 
-extern int snespos;
 int optimizeforbank=-1;
 
 const char * thisfilename;
@@ -129,6 +135,7 @@ notposneglabel:
 	while (*str)
 	{
 		int thislen=0;
+		bool maybebankextraction=(str==orgstr);
 		if (*str=='$')
 		{
 			str++;
@@ -163,12 +170,13 @@ notposneglabel:
 		else if (isalpha(*str) || *str=='.' || *str=='?')
 		{
 			unsigned int thislabel;
-			bool maybebankextraction=(str==orgstr);
 			bool exists=labelval(&str, &thislabel);
 			thislen=getlenforlabel(snespos, thislabel, exists);
-			if (optimizebankextraction && maybebankextraction && (!strcmp(str, " >> 16") || !strcmp(str, ">>16"))) thislen=1;
 		}
 		else str++;
+		if (optimizebankextraction && maybebankextraction &&
+				(!strcmp(str, ">>16") || !strcmp(str, "/65536") || !strcmp(str, "/$10000")))
+					return 1;
 		if (thislen>len) len=thislen;
 	}
 	if (len>3) return 3;
@@ -180,23 +188,23 @@ extern bool forwardlabel;
 
 int getnum(const char * str)
 {
-	if (str[0]=='+' || str[0]=='-')
-	{
-		int i;
-		for (i=0;str[i];i++)
-		{
-			if (str[i]!=str[0]) goto notposneglabel;
-		}
-		if (!str[i])
-		{
-			foundlabel=true;
-			if (str[0]=='+') forwardlabel=true;
-			if (str[0]=='+') return labelval(S":pos_"+dec(i)+"_"+dec(poslabels[i]))&0xFFFFFF;
-			else             return labelval(S":neg_"+dec(i)+"_"+dec(neglabels[i]))&0xFFFFFF;
-			return 0;
-		}
-	}
-notposneglabel:
+//	if (str[0]=='+' || str[0]=='-')
+//	{
+//		int i;
+//		for (i=0;str[i];i++)
+//		{
+//			if (str[i]!=str[0]) goto notposneglabel;
+//		}
+//		if (!str[i])
+//		{
+//			foundlabel=true;
+//			if (str[0]=='+') forwardlabel=true;
+//			if (str[0]=='+') return labelval(S":pos_"+dec(i)+"_"+dec(poslabels[i]))&0xFFFFFF;
+//			else             return labelval(S":neg_"+dec(i)+"_"+dec(neglabels[i]))&0xFFFFFF;
+//			return 0;
+//		}
+//	}
+//notposneglabel:
 	const char * e;
 	int num=math(str, &e);
 	if (e)
@@ -359,6 +367,7 @@ bool autocolon=false;
 
 bool moreonline;
 bool asarverallowed;
+bool istoplevel;
 
 extern int numtrue;
 extern int numif;
@@ -412,7 +421,7 @@ void assembleline(const char * fname, int linenum, const char * line)
 extern int numif;
 extern int numtrue;
 
-void assemblefile(const char * filename)
+void assemblefile(const char * filename, bool toplevel)
 {
 	thisfilename=filename;
 	thisline=-1;
@@ -431,6 +440,8 @@ void assemblefile(const char * filename)
 		for (int i=0;lines[i];i++)
 		{
 			if (strqchr(lines[i], ';')) *strqchr(lines[i], ';')=0;
+			while (strqchr(lines[i], '\t')) *strqchr(lines[i], '\t')=' ';
+			if (!confirmquotes(lines[i])) { thisline=i; thisblock=lines[i]; error<errnull>(0, "Mismatched quotes"); lines[i][0]='\0'; }
 			itrim(lines[i], " ", " ", true);
 			for (int j=1;strqchr(lines[i], ',') && !strqrchr(lines[i], ',')[1] && lines[i+j];j++)
 			{
@@ -450,6 +461,7 @@ void assemblefile(const char * filename)
 			thisfilename=filename;
 			thisline=i;
 			thisblock=NULL;
+			istoplevel=toplevel;
 			if (stribegin(lines[i], "macro ") && numif==numtrue)
 			{
 				if (inmacro) error<errline>(0, "Nested macro definition");
@@ -471,7 +483,7 @@ void assemblefile(const char * filename)
 		catch (errline&) {}
 		asarverallowed=false;
 	}
-	thisline=-1;
+	thisline++;
 	thisblock=NULL;
 	if (inmacro)
 	{
@@ -491,7 +503,7 @@ void assemblefile(const char * filename)
 	}
 }
 
-bool checksum=false;
+bool checksum=true;
 extern lightweight_map<string, unsigned int> labels;
 extern autoarray<string> sublabels;
 extern string ns;

@@ -9,6 +9,7 @@
 
 bool math_pri=true;
 bool math_round=false;
+bool math_xorexp=false;
 
 #define error(str) throw str
 static const char * str;
@@ -30,11 +31,7 @@ static long double getnumcore()
 	if (*str=='$')
 	{
 		if (!isxdigit(str[1])) error("Invalid hex value.");
-		if (str[1]=='0' && tolower(str[2])=='x')//to block $0xEA
-		{
-			str+=2;
-			return 0;
-		}
+		while (str[1]=='0') str++;//to block $0xEA
 		return strtol(str+1, (char**)&str, 16);
 	}
 	if (*str=='%')
@@ -47,10 +44,10 @@ static long double getnumcore()
 		if (math_round) return strtol(str, (char**)&str, 10);
 		else return strtod(str, (char**)&str);
 	}
-	if (isalpha(*str))
+	if (isalpha(*str) || *str<0 || *str>127)
 	{
 		const char * start=str;
-		while (isalnum(*str) || *str=='_') str++;
+		while (isalnum(*str) || *str=='_' || *str<0 || *str>127) str++;
 		int len=str-start;
 		while (*str==' ') str++;
 		if (*str=='(')
@@ -79,17 +76,16 @@ static long double getnumcore()
 					error("Malformed function call.");
 				}
 			}
-			long double rval;
 #define func(name, numpar, code)                                   \
-					if (!strncasecmp(start, name, len))                      \
+					if (!strncasecmp(start, name, len) && name[len]==0)      \
 					{                                                        \
 						if (numparams==numpar) return (code);                  \
 						else error("Wrong number of parameters to function."); \
 					}
 #define varfunc(name, code)                                   \
-					if (!strncasecmp(start, name, len))                      \
-					{                                                        \
-						code; \
+					if (!strncasecmp(start, name, len) && name[len]==0) \
+					{                                                   \
+						code;                                             \
 					}
 			func("sqrt", 1, sqrt(params[0]));
 			func("sin", 1, sin(params[0]));
@@ -140,16 +136,23 @@ static long double getnumcore()
 	error("Invalid number.");
 }
 
+static long double sanitize(long double val)
+{
+	if (val!=val) error("NaN encountered.");
+	if (math_round) return (int)val;
+	return val;
+}
+
 static long double getnum()
 {
 	while (*str==' ') str++;
-#define prefix(name, func) if (!strnicmp(str, name, strlen(name))) { str+=strlen(name); long double val=getnum(); return (func); }
+#define prefix(name, func) if (!strnicmp(str, name, strlen(name))) { str+=strlen(name); long double val=getnum(); return sanitize(func); }
 	prefix("-", -val);
 	prefix("~", ~(int)val);
 	prefix("+", val);
-	//prefix("#", val);
+	prefix("#", val);
 #undef prefix
-	return getnumcore();
+	return sanitize(getnumcore());
 }
 
 static long double eval(int depth)
@@ -160,45 +163,41 @@ static long double eval(int depth)
 	while (*str && *str!=')' && *str!=',')
 	{
 		while (*str==' ') str++;
-		if (math_round) left=(int)left;
-#define oper(name, thisdepth, contents)            \
-			if (!strnicmp(str, name, strlen(name)))      \
-			{                                            \
-				if (math_pri)                              \
-				{                                          \
-					if (depth<=thisdepth)                    \
-					{                                        \
-						str+=strlen(name);                     \
-						right=eval(thisdepth+1);               \
-						if (math_round) right=(int)right;      \
-					}                                        \
-					else return left;                        \
-				}                                          \
-				else                                       \
-				{                                          \
-					str+=strlen(name);                       \
-					right=getnum();                          \
-					if (math_round) right=(int)right;        \
-				}                                          \
-				left=(contents);                           \
-				if (left!=left) error("NaN encountered."); \
-				continue;                                  \
+#define oper(name, thisdepth, contents)       \
+			if (!strnicmp(str, name, strlen(name))) \
+			{                                       \
+				if (math_pri)                         \
+				{                                     \
+					if (depth<=thisdepth)               \
+					{                                   \
+						str+=strlen(name);                \
+						right=eval(thisdepth+1);          \
+					}                                   \
+					else return left;                   \
+				}                                     \
+				else                                  \
+				{                                     \
+					str+=strlen(name);                  \
+					right=getnum();                     \
+				}                                     \
+				left=sanitize(contents);              \
+				continue;                             \
 			}
-		oper("&", 0, (int)left&(int)right);
-		oper("|", 0, (int)left|(int)right);
-		oper("^", 0, (int)left^(int)right);
-		oper("<<", 1, (int)left<<(int)right);
-		oper(">>", 1, (int)left>>(int)right);
-		oper("+", 2, left+right);
-		oper("-", 2, left-right);
+		oper("**", 4, pow(left, right));
+		if (math_xorexp) oper("^", 4, pow(left, right));
 		oper("*", 3, left*right);
 		oper("/", 3, right?left/right:error("Division by zero."));
 		oper("%", 3, right?fmod(left, right):error("Modulos by zero."));
-		oper("**", 4, pow(left, right));
+		oper("+", 2, left+right);
+		oper("-", 2, left-right);
+		oper("<<", 1, (int)left<<(int)right);
+		oper(">>", 1, (int)left>>(int)right);
+		oper("&", 0, (int)left&(int)right);
+		oper("|", 0, (int)left|(int)right);
+		oper("^", 0, (int)left^(int)right);
 		error("Unknown operator.");
 #undef oper
 	}
-	if (math_round) left=(int)left;
 	return left;
 }
 
@@ -208,7 +207,11 @@ long double math(const char * s, const char ** e)
 	{
 		str=s;
 		long double rval=eval(0);
-		if (*str) error("Mismatched parentheses.");
+		if (*str)
+		{
+			if (*str==',') error("Invalid input.");
+			else error("Mismatched parentheses.");
+		}
 		*e=NULL;
 		return rval;
 	}

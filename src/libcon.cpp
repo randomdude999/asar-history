@@ -7,18 +7,22 @@
 static char * progname;
 static char ** args;
 static int argsleft;
-static bool optional;
 bool libcon_interactive;
 static const char * usage;
 
 static volatile bool confirmclose=true;
-static void myexit()
+void libcon_pause()
 {
 	if (confirmclose)
 	{
-		printf("Press Enter to continue");
 		confirmclose=false;
+#if defined(_WIN32)
+		system("pause");
+#else
+		printf("Press Enter to continue");
 		getchar();
+#endif
+		confirmclose=true;
 	}
 }
 
@@ -30,14 +34,14 @@ void libcon_badusage()
 
 static const char * getarg(bool tellusage, const char * defval=NULL)
 {
-	if (argsleft)
+	if (!argsleft)
 	{
-		args++;
-		argsleft--;
-		return args[0];
+		if (tellusage) libcon_badusage();
+		return defval;
 	}
-	if (tellusage) libcon_badusage();
-	return defval;
+	args++;
+	argsleft--;
+	return args[0];
 }
 
 static const char * getfname(bool tellusage, const char * defval=NULL)
@@ -60,7 +64,7 @@ static const char * getfname(bool tellusage, const char * defval=NULL)
 	//return rval;
 }
 
-static const char * requirestrfromuser(const char * question)
+static const char * requirestrfromuser(const char * question, bool filename)
 {
 	confirmclose=false;
 	char * rval=(char*)malloc(256);
@@ -72,10 +76,18 @@ static const char * requirestrfromuser(const char * question)
 	}
 	*strchr(rval, '\n')=0;
 	confirmclose=true;
+#ifdef _WIN32
+	if (filename && rval[0]=='"' && rval[2]==':')
+	{
+		char * rvalend=strchr(rval, '\0');
+		if (rvalend[-1]=='"') rvalend[-1]='\0';
+		return rval+1;
+	}
+#endif
 	return rval;
 }
 
-static const char * requeststrfromuser(const char * question, const char * defval)
+static const char * requeststrfromuser(const char * question, bool filename, const char * defval)
 {
 	confirmclose=false;
 	char * rval=(char*)malloc(256);
@@ -85,6 +97,14 @@ static const char * requeststrfromuser(const char * question, const char * defva
 	*strchr(rval, '\n')=0;
 	confirmclose=true;
 	if (!*rval) return defval;
+#ifdef _WIN32
+	if (filename && rval[0]=='"' && rval[2]==':')
+	{
+		char * rvalend=strchr(rval, '\0');
+		if (rvalend[-1]=='"') rvalend[-1]='\0';
+		return rval+1;
+	}
+#endif
 	return rval;
 }
 
@@ -95,30 +115,30 @@ void libcon_init(int argc, char ** argv, const char * usage_)
 	argsleft=argc-1;
 	usage=usage_;
 	libcon_interactive=(!argsleft);
-	if (libcon_interactive) atexit(myexit);
+	if (libcon_interactive) atexit(libcon_pause);
 }
 
 const char * libcon_require(const char * desc)
 {
-	if (libcon_interactive) return requirestrfromuser(desc);
+	if (libcon_interactive) return requirestrfromuser(desc, false);
 	else return getarg(true);
 }
 
 const char * libcon_require_filename(const char * desc)
 {
-	if (libcon_interactive) return requirestrfromuser(desc);
+	if (libcon_interactive) return requirestrfromuser(desc, true);
 	else return getfname(true);
 }
 
 const char * libcon_optional(const char * desc, const char * defval)
 {
-	if (libcon_interactive) return requeststrfromuser(desc, defval);
+	if (libcon_interactive) return requeststrfromuser(desc, false, defval);
 	else return getarg(false, defval);
 }
 
 const char * libcon_optional_filename(const char * desc, const char * defval)
 {
-	if (libcon_interactive) return requeststrfromuser(desc, defval);
+	if (libcon_interactive) return requeststrfromuser(desc, true, defval);
 	else return getfname(false, defval);
 }
 
@@ -139,7 +159,7 @@ bool libcon_question_bool(const char * desc, bool defval)
 	if (!libcon_interactive) return defval;
 	while (true)
 	{
-		const char * answer=requeststrfromuser(desc, defval?"y":"n");
+		const char * answer=requeststrfromuser(desc, false, defval?"y":"n");
 		if (!stricmp(answer, "y") || !stricmp(answer, "yes")) return true;
 		if (!stricmp(answer, "n") || !stricmp(answer, "no")) return false;
 	}

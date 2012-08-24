@@ -13,7 +13,6 @@ int snespos;
 int realsnespos;
 int startpos;
 int realstartpos;
-extern int romlen;
 
 extern int optimizeforbank;
 
@@ -32,12 +31,13 @@ int snestopc_pick(int addr)
 	if (arch==arch_spc700_inline) return addr;
 	if (arch==arch_spc700_raw) return addr;
 	if (arch==arch_null) return addr;
+	if (arch==arch_superfx) return snestopc(addr);
 	return addr;
 }
 
 inline void verifysnespos()
 {
-	if (snespos==0xFFFFFFFF || realsnespos==0xFFFFFFFF)
+	if (snespos<0 || realsnespos<0)
 	{
 		warn0("Missing org or freespace command");
 		snespos=0x008000;
@@ -59,7 +59,7 @@ inline void write1_65816(unsigned int num)
 {
 	if (pass==2)
 	{
-		int pcpos= mapper==spc7110 ? snestopc(realsnespos) : snestopc(realsnespos&0xFFFFFF);
+		int pcpos=snestopc(realsnespos&0xFFFFFF);
 		if (pcpos<0) error(2, S"SNES address $"+hex6(realsnespos)+" doesn't map to ROM");
 		romdata[pcpos]=num;
 		if (pcpos>=romlen) romlen=pcpos+1;
@@ -71,7 +71,7 @@ inline void write1_generic16(unsigned int num)
 {
 	if (pass==2)
 	{
-		if (realsnespos&0xFFFF0000) error(1, "Address out of bounds");
+		if (realsnespos&0xFFFF0000) error(2, "Address out of bounds");
 		int pcpos=realsnespos&0xFFFF;
 		romdata[pcpos]=num;
 		if (pcpos>=romlen) romlen=pcpos+1;
@@ -83,7 +83,7 @@ inline void write1_generic24(unsigned int num)
 {
 	if (pass==2)
 	{
-		if (realsnespos&0xFF000000) error(1, "Address out of bounds");
+		if (realsnespos&0xFF000000) error(2, "Address out of bounds");
 		int pcpos=realsnespos&0xFFFFFF;
 		romdata[pcpos]=num;
 		if (pcpos>=romlen) romlen=pcpos+1;
@@ -97,6 +97,7 @@ void write1_pick(unsigned int num)
 	if (arch==arch_65816) write1_65816(num);
 	if (arch==arch_spc700_inline) write1_65816(num);
 	if (arch==arch_spc700_raw) write1_generic16(num);
+	if (arch==arch_superfx) write1_65816(num);
 	if (arch==arch_null) return;
 }
 
@@ -106,12 +107,16 @@ void asend_65816();
 void asinit_spc700();
 bool asblock_spc700(char** word, int numwords);
 void asend_spc700();
+void asinit_superfx();
+bool asblock_superfx(char** word, int numwords);
+void asend_superfx();
 
 bool asblock_pick(char** word, int numwords)
 {
 	if (arch==arch_65816) return asblock_65816(word, numwords);
 	if (arch==arch_spc700_inline) return asblock_spc700(word, numwords);
 	if (arch==arch_spc700_raw) return asblock_spc700(word, numwords);
+	if (arch==arch_superfx) return asblock_superfx(word, numwords);
 	if (arch==arch_null) return false;
 	return true;
 }
@@ -135,7 +140,7 @@ extern bool forwardlabel;
 int getlen(const char * str);
 int getnum(const char * str);
 
-void assemblefile(const char * filename);
+void assemblefile(const char * filename, bool toplevel);
 extern const char * thisfilename;
 extern int thisline;
 
@@ -151,8 +156,8 @@ void write2(unsigned int num)
 	//{
 	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
 	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata[pcpos+0]=num    ;
-	//	romdata[pcpos+1]=num>> 8;
+	//	romdata_r[pcpos+0]=num    ;
+	//	romdata_r[pcpos+1]=num>> 8;
 	//	if (pcpos+2>romlen) romlen=pcpos+2;
 	//}
 	//step(2);
@@ -167,9 +172,9 @@ void write3(unsigned int num)
 	//{
 	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
 	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata[pcpos+0]=num    ;
-	//	romdata[pcpos+1]=num>> 8;
-	//	romdata[pcpos+2]=num>>16;
+	//	romdata_r[pcpos+0]=num    ;
+	//	romdata_r[pcpos+1]=num>> 8;
+	//	romdata_r[pcpos+2]=num>>16;
 	//	if (pcpos+3>romlen) romlen=pcpos+3;
 	//}
 	//step(3);
@@ -185,21 +190,22 @@ void write4(unsigned int num)
 	//{
 	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
 	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata[pcpos+0]=num    ;
-	//	romdata[pcpos+1]=num>> 8;
-	//	romdata[pcpos+2]=num>>16;
-	//	romdata[pcpos+3]=num>>24;
+	//	romdata_r[pcpos+0]=num    ;
+	//	romdata_r[pcpos+1]=num>> 8;
+	//	romdata_r[pcpos+2]=num>>16;
+	//	romdata_r[pcpos+3]=num>>24;
 	//	if (pcpos+4>romlen) romlen=pcpos+4;
 	//}
 	//step(4);
 }
 
+//these are NOT used by the math parser - see math.cpp for that
 int read1(int snespos)
 {
 	int addr=snestopc(snespos);
-	if (addr<0 || addr+1>romlen) return -1;
+	if (addr<0 || addr+1>romlen_r) return -1;
 	return
-			 romdata[addr  ]     ;
+			 romdata_r[addr  ]     ;
 }
 
 int read2(int snespos)
@@ -208,10 +214,10 @@ int read2(int snespos)
 	//		read1(snespos  )    |
 	//		read1(snespos+1)<< 8;
 	int addr=snestopc(snespos);
-	if (addr<0 || addr+2>romlen) return -1;
+	if (addr<0 || addr+2>romlen_r) return -1;
 	return
-			 romdata[addr  ]     |
-			(romdata[addr+1]<< 8);
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8);
 }
 
 int read3(int snespos)
@@ -221,11 +227,11 @@ int read3(int snespos)
 	//		read1(snespos+1)<< 8|
 	//		read1(snespos+2)<<16;
 	int addr=snestopc(snespos);
-	if (addr<0 || addr+3>romlen) return -1;
+	if (addr<0 || addr+3>romlen_r) return -1;
 	return
-			 romdata[addr  ]     |
-			(romdata[addr+1]<< 8)|
-			(romdata[addr+2]<<16);
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8)|
+			(romdata_r[addr+2]<<16);
 }
 
 int getlenfromchar(char c)
@@ -387,15 +393,22 @@ bool labelval(string name, unsigned int * rval, bool define)
 	return labelvalcore(&str, rval, define, false);
 }
 
+static bool redefinedlabels=false;
 void setlabel(string name, int loc=-1)
 {
-	verifysnespos();
-	if (loc==-1) loc=snespos;
-//puts(S dec(pass)+"W:"+name+"->"+hex6(loc));
+	if (loc==-1)
+	{
+		verifysnespos();
+		loc=snespos;
+	}
 	unsigned int labelpos;
 	if (pass==0)
 	{
-		if (labels.find(name, labelpos)) error(0, S"Label \""+name+"\" redefined");
+		if (labels.find(name, labelpos))
+		{
+			redefinedlabels=true;
+			error(0, S"Label \""+name+"\" redefined");
+		}
 		labels.insert(name, loc);
 	}
 	else if (pass==1)
@@ -405,9 +418,8 @@ void setlabel(string name, int loc=-1)
 	else if (pass==2)
 	{
 		//all label locations are known at this point, add a sanity check
-		if (!labels.find(name, labelpos) || labelpos!=loc) error(2, "Internal error: A label is moving around. "
-			"If you're reading from a ROM byte that is also written to by the same patch (including autoclean), stop that. "
-			"Otherwise, send this patch to Alcaro so he can debug it.");
+		if (!labels.find(name, labelpos)) error(2, "Internal error: A label was created on the third patch. Send this patch to Alcaro so he can debug it.");
+		if ((int)labelpos!=loc && !redefinedlabels) error(2, "Internal error: A label is moving around. Send this patch to Alcaro so he can debug it.");
 	}
 }
 
@@ -426,6 +438,7 @@ int freespaceline[256];
 
 int freespaceorgpos[256];
 int freespaceorglen[256];
+bool freespacestatic[256];
 
 void cleartable()
 {
@@ -438,6 +451,9 @@ int snespos;
 int snesstart;
 int snesposreal;
 int snesstartreal;
+int freeid;
+int freeex;
+int freest;
 int arch1;
 int arch2;
 int arch3;
@@ -446,20 +462,21 @@ int arch4;
 autoarray<pushable> pushpc;
 int pushpcnum;
 
-unsigned char fillbyte;
-unsigned char padbyte;
+unsigned char fillbyte[12];
+unsigned char padbyte[12];
 
 bool sandbox=false;
 
 void freespaceend()
 {
-	if (snespos==0xFFFFFFFF && realsnespos==0xFFFFFFFF && startpos==0xFFFFFFFF && realstartpos==0xFFFFFFFF) return;
+	if (freespaceidnext>125) fatalerror("A patch may not contain more than 125 freespaces.");
+	if (snespos<0 && realsnespos<0 && startpos<0 && realstartpos<0) return;
 //puts(S hex(snespos)+"^"+hex(startpos)+"&0xFFFF0000 ("+hex((snespos^startpos)&0xFFFF0000)+")");
 //puts(S hex(realsnespos)+"^"+hex(realstartpos)+"&0xFFFF0000 ("+hex((realsnespos^realstartpos)&0xFFFF0000)+")");
-	if ((((    snespos^    startpos)&0xFFFF0000) && (((    snespos-1)^    startpos)&0xFFFF0000)) ||
-			(((realsnespos^realstartpos)&0xFFFF0000) && (((realsnespos-1)^realstartpos)&0xFFFF0000)))
+	if ((((    snespos^    startpos)&0x7FFF0000) && (((    snespos-1)^    startpos)&0x7FFF0000)) ||
+			(((realsnespos^realstartpos)&0x7FFF0000) && (((realsnespos-1)^realstartpos)&0x7FFF0000)))
 				fatalerror("A bank border was crossed somewhere prior to this point.");
-	if (snespos&0xFF000000)
+	if (snespos&0x7F000000)
 	{
 		freespacelen[freespaceid]=snespos-freespacestart+freespaceextra;
 		freespaceid=++freespaceidnext;
@@ -504,8 +521,8 @@ void initstuff()
 	pushpc.reset();
 	pushpcnum=0;
 	bytes=0;
-	fillbyte=0x00;
-	padbyte=0x00;
+	memset(fillbyte, 0, sizeof(fillbyte));
+	memset(padbyte, 0, sizeof(padbyte));
 	snespos=0xFFFFFFFF;
 	realsnespos=0xFFFFFFFF;
 	startpos=0xFFFFFFFF;
@@ -522,6 +539,7 @@ void initstuff()
 	if (arch==arch_65816) asinit_65816();
 	if (arch==arch_spc700_inline) asinit_spc700();
 	if (arch==arch_spc700_raw) asinit_spc700();
+	if (arch==arch_superfx) asinit_superfx();
 	
 	warnxkas=false;
 }
@@ -538,6 +556,7 @@ void finishpass()
 	if (arch==arch_65816) asend_65816();
 	if (arch==arch_spc700_inline) asend_spc700();
 	if (arch==arch_spc700_raw) asend_spc700();
+	if (arch==arch_superfx) asend_superfx();
 }
 
 bool addlabel(const char * label, int pos=-1)
@@ -565,11 +584,12 @@ bool addlabel(const char * label, int pos=-1)
 	return false;
 }
 
-//autoarray<int> ifstatus;
+autoarray<bool> elsestatus;
 int numtrue=0;//if 1 -> increase both
 int numif=0;  //if 0 or inside if 0 -> increase only numif
 
 extern bool asarverallowed;
+extern bool istoplevel;
 
 extern bool moreonline;
 
@@ -580,6 +600,8 @@ extern bool checksum;
 extern const char * callerfilename;
 extern int callerline;
 extern int macrorecursion;
+
+int freespaceuse=0;
 
 void assembleblock(const char * block)
 {
@@ -621,7 +643,7 @@ void assembleblock(const char * block)
 #define is4(test) (!stricmp(word[0], test) && numwords==5)
 #define is5(test) (!stricmp(word[0], test) && numwords==6)
 #define par word[1]
-	if (is1("if") || is3("if") || is1("assert") || is3("assert"))
+	if (is("if") || is("elseif") || is("assert"))
 	{
 		const char * errmsg=NULL;
 		if (is("assert"))
@@ -633,73 +655,174 @@ void assembleblock(const char * block)
 				errmsg=dequote(rawerrmsg+1);
 			}
 		}
-		if (numtrue!=numif)
+		if (numtrue!=numif && !(is("elseif") && numtrue+1==numif))
 		{
 			if (is("if") && !moreonline) numif++;
 			return;
 		}
+		if (is("if") && !moreonline) numif++;
 		bool cond;
-		if (numwords==4)
+		
+		char ** nextword=word+1;
+		char * condstr=NULL;
+		while (true)
 		{
-			int par1=getnum(word[1]);
-			if (foundlabel) error(0, "Label in if or assert command");
-			int par2=getnum(word[3]);
-			if (foundlabel) error(0, "Label in if or assert command");
-			if(0);
-			else if (!stricmp(word[2], ">"))  cond=(par1>par2);
-			else if (!stricmp(word[2], "<"))  cond=(par1<par2);
-			else if (!stricmp(word[2], ">=")) cond=(par1>=par2);
-			else if (!stricmp(word[2], "<=")) cond=(par1<=par2);
-			else if (!stricmp(word[2], "="))  cond=(par1==par2);
-			else if (!stricmp(word[2], "==")) cond=(par1==par2);
-			else if (!stricmp(word[2], "!=")) cond=(par1!=par2);
-			//else if (!stricmp(word[2], "<>")) cond=(par1!=par2);
-			else error(0, "Broken if or assert command");
+			if (!nextword[0]) error(0, S"Broken "+lower(word[0])+" command");
+			bool thiscond;
+			if (!nextword[1] || !strcmp(nextword[1], "&&") || !strcmp(nextword[1], "||"))
+			{
+				if (nextword[0][0]=='!')
+				{
+					//this part is not mentioned in the manual
+					int val=getnum(nextword[0]+1);
+					if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+					thiscond=!(val>0);
+				}
+				else
+				{
+					int val=getnum(nextword[0]);
+					if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+					thiscond=(val>0);
+				}
+				
+				if (condstr && nextword[1])
+				{
+					if (strcmp(condstr, nextword[1])) error(1, "Invalid condition");
+				}
+				else condstr=nextword[1];
+				nextword+=2;
+			}
+			else
+			{
+				if (!nextword[2]) error(0, S"Broken "+lower(word[0])+" command");
+				int par1=getnum(nextword[0]);
+				if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+				int par2=getnum(nextword[2]);
+				if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+				if(0);
+				else if (!strcmp(nextword[1], ">"))  thiscond=(par1>par2);
+				else if (!strcmp(nextword[1], "<"))  thiscond=(par1<par2);
+				else if (!strcmp(nextword[1], ">=")) thiscond=(par1>=par2);
+				else if (!strcmp(nextword[1], "<=")) thiscond=(par1<=par2);
+				else if (!strcmp(nextword[1], "="))  thiscond=(par1==par2);
+				else if (!strcmp(nextword[1], "==")) thiscond=(par1==par2);
+				else if (!strcmp(nextword[1], "!=")) thiscond=(par1!=par2);
+				//else if (!strcmp(nextword[1], "<>")) thiscond=(par1!=par2);
+				else error(0, S"Broken "+lower(word[0])+" command");
+				
+				if (condstr && nextword[3])
+				{
+					if (strcmp(condstr, nextword[3])) error(1, "Invalid condition");
+				}
+				else condstr=nextword[3];
+				nextword+=4;
+			}
+			if (condstr)
+			{
+				if (!strcmp(condstr, "&&") && thiscond) continue;
+				if (!strcmp(condstr, "||") && !thiscond) continue;
+			}
+			cond=thiscond;
+			break;
 		}
-		else if (*par=='!')
-		{
-			int val=getnum(par+1);
-			if (foundlabel) error(0, "Label in if or assert command");
-			cond=!(val>0);
-		}
-		else
-		{
-			int val=getnum(par);
-			if (foundlabel) error(0, "Label in if or assert command");
-			cond=(val>0);
-		}
+		//if (numwords==4)
+		//{
+		//	int par1=getnum(word[1]);
+		//	if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+		//	int par2=getnum(word[3]);
+		//	if (foundlabel) error(1, S"Label in "+lower(word[0])+" command");
+		//	if(0);
+		//	else if (!strcmp(word[2], ">"))  cond=(par1>par2);
+		//	else if (!strcmp(word[2], "<"))  cond=(par1<par2);
+		//	else if (!strcmp(word[2], ">=")) cond=(par1>=par2);
+		//	else if (!strcmp(word[2], "<=")) cond=(par1<=par2);
+		//	else if (!strcmp(word[2], "="))  cond=(par1==par2);
+		//	else if (!strcmp(word[2], "==")) cond=(par1==par2);
+		//	else if (!strcmp(word[2], "!=")) cond=(par1!=par2);
+		//	//else if (!stricmp(word[2], "<>")) cond=(par1!=par2);
+		//	else error(0, S"Broken "+lower(word[0])+" command");
+		//}
+		//else if (*par=='!')
+		//{
+		//	int val=getnum(par+1);
+		//	if (foundlabel) error(1, "Label in if or assert command");
+		//	cond=!(val>0);
+		//}
+		//else
+		//{
+		//	int val=getnum(par);
+		//	if (foundlabel) error(1, "Label in if or assert command");
+		//	cond=(val>0);
+		//}
+		
 		if (is("if"))
 		{
 			if(0);
 			else if (cond && moreonline) {}
 			else if (cond && !moreonline)
 			{
-				numif++;
 				numtrue++;
+				elsestatus[numif]=true;
 			}
 			else if (!cond && moreonline) moreonline=false;
-			else if (!cond && !moreonline) numif++;
+			else if (!cond && !moreonline)
+			{
+				elsestatus[numif]=false;
+			}
+		}
+		else if (is("elseif"))
+		{
+			if (moreonline) error(1, "Can't use elseif on single-line statements");
+			if (numif==numtrue) numtrue--;
+			if (cond && !elsestatus[numif])
+			{
+				numtrue++;
+				elsestatus[numif]=true;
+			}
 		}
 		else if (!cond)
 		{
-			if (errmsg) error(0, S"Assertion failed: "+(const char*)errmsg);
-			else error(0, "Assertion failed");
+			if (errmsg) error(1, S"Assertion failed: "+(const char*)errmsg);
+			else error(1, "Assertion failed");
 		}
 	}
 	else if (is0("endif"))
 	{
-		if (!numif) error(0, "Misplaced endif");
+		if (!numif) error(1, "Misplaced endif");
 		if (numif==numtrue) numtrue--;
 		numif--;
 	}
+//autoarray<bool> elsestatus;
+//int numtrue=0;//if 1 -> increase both
+//int numif=0;  //if 0 or inside if 0 -> increase only numif
 	else if (is0("else"))
 	{
-		if (!numif) error(0, "Misplaced else");
+		if (!numif) error(1, "Misplaced else");
 		else if (numif==numtrue) numtrue--;
-		else if (numif==numtrue+1) numtrue++;
+		else if (numif==numtrue+1 && !elsestatus[numif])
+		{
+			numtrue++;
+			elsestatus[numif]=true;
+		}
 	}
 	else if (numif!=numtrue) return;
 	else if (asblock_pick(word, numwords)) { numopcodes++; }
+	else if (is0("error"))
+	{
+		error(0, "error command encountered");
+	}
+	else if (is0("warn"))
+	{
+		if (pass==2) warn("warn command encountered");
+	}
+	else if (is1("error"))
+	{
+		error(0, dequote(par));
+	}
+	else if (is1("warn"))
+	{
+		if (pass==2) warn(dequote(par));
+	}
 	else if (is0("asar") || is1("asar"))
 	{
 		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
@@ -725,18 +848,29 @@ void assembleblock(const char * block)
 		if (vermaj>asarver_maj) return;
 		if (dots==1)
 		{
-			if (strlen(vers[1])!=2) error(0, "Invalid version number");
+			if (strlen(vers[1])!=2) error(0, "Invalid version number.");
 			//if (asarver_min<10 && asarver_bug<10 && strlen(vers[1])>2) error(0, "This version of Asar is too old for this patch.");
 			int verminbug=atoi(vers[1]);
-			//if ((asarver_bug>=10 || strlen(vers[1])>2) && (asarver_min*100+asarver_bug<verminbug)) error(0, "This version of Asar is too old for this patch.");
-			/*else*/ if (asarver_min*10+asarver_bug<verminbug) error(0, "This version of Asar is too old for this patch.");
+			int tmpver=asarver_bug;
+			if (tmpver>9) tmpver=9;
+			if (asarver_min*10+tmpver<verminbug) fatalerror("This version of Asar is too old for this patch.");
 		}
 		else
 		{
 			int vermin=atoi(vers[1]);
-			if (vermin>asarver_min) error(0, "This version of Asar is too old for this patch.");
+			if (vermin>asarver_min) fatalerror("This version of Asar is too old for this patch.");
 			int verbug=atoi(vers[2]);
-			if (vermin==asarver_min && verbug>asarver_bug) error(0, "This version of Asar is too old for this patch.");
+			if (vermin==asarver_min && verbug>asarver_bug) fatalerror("This version of Asar is too old for this patch.");
+		}
+	}
+	else if (is0("include") || is1("includefrom"))
+	{
+		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
+		if (!suppresswarnings) error(0, "This command must be preceded by an @.");
+		if (istoplevel)
+		{
+			if (par) fatalerror(S"This file may not be used as the main file. The main file is \""+S par+"\".");
+			else fatalerror("This file may not be used as the main file.");
 		}
 	}
 	else if (is1("db") || is1("dw") || is1("dl") || is1("dd"))
@@ -764,10 +898,11 @@ void assembleblock(const char * block)
 			{
 				const char * math=pars[i];
 				if (math[0]=='#') math++;
-				if (len==1) write1(getnum(math));
-				if (len==2) write2(getnum(math));
-				if (len==3) write3(getnum(math));
-				if (len==4) write4(getnum(math));
+				int num=(pass!=0)?getnum(math):0;
+				if (len==1) write1(num);
+				if (len==2) write2(num);
+				if (len==3) write3(num);
+				if (len==4) write4(num);
 			}
 		}
 	}
@@ -787,14 +922,8 @@ void assembleblock(const char * block)
 	{
 		freespaceend();
 		int num=getnum(par);
-		if (forwardlabel) error(0, "org Label is not valid");
-		if (mapper != spc7110){
-			if (num&~0xFFFFFF) error(1, "Address out of bounds");
-		}else{
-			int tmpnum = num;
-			if (num>=0xC00000) tmpnum -= 0xC00000; 
-			romlen = romlen < tmpnum ? ((tmpnum >> 20)+1)<<20 : romlen;
-		}
+		if (forwardlabel) error(0, "org Label is only valid for labels earlier in the patch");
+		if (num&~0xFFFFFF) error(1, "Address out of bounds");
 		if (fastrom) num|=0x800000;
 		snespos=num;
 		realsnespos=num;
@@ -854,7 +983,7 @@ void assembleblock(const char * block)
 				if (useram!=-1) error(0, "Invalid freespace request.");
 				useram=0;
 			}
-			else if (!stricmp(pars[i], "static"))
+			else if (!stricmp(pars[i], "static") || !stricmp(pars[i], "fixed"))
 			{
 				if (fixedpos) error(0, "Invalid freespace request.");
 				fixedpos=true;
@@ -862,7 +991,7 @@ void assembleblock(const char * block)
 			else error(0, "Invalid freespace request.");
 		}
 		if (useram==-1) error(0, "Invalid freespace request.");
-		if (mapper==hirom && useram) error(0, "No banks contain the RAM in hirom.");
+		if (mapper==hirom && useram) error(0, "No banks contain the RAM mirrors in hirom.");
 		if (mapper==norom) error(0, "Can't find freespace in norom.");
 		freespaceend();
 		if (pass==0) snespos=(freespaceid<<24)|0x8000;
@@ -870,11 +999,14 @@ void assembleblock(const char * block)
 		{
 			if (fixedpos && freespaceorgpos[freespaceid]<0)
 			{
+				freespacepos[freespaceid]=0x008000;
+				freespaceleak[freespaceid]=false;//mute some other errors
 				/*if (freespaceorgpos[freespaceid]==-1)*/ error(1, "A static freespace must be targeted by at least one autoclean.");
 				/*if (freespaceorgpos[freespaceid]==-2)   error(1, "A static freespace must be targeted by at least one autoclean.");*/
 			}
 			if (fixedpos && freespaceorgpos[freespaceid]) freespacepos[freespaceid]=snespos=(freespaceid<<24)|freespaceorgpos[freespaceid];
 			else freespacepos[freespaceid]=snespos=(freespaceid<<24)|getsnesfreespace(freespacelen[freespaceid], useram);
+			freespaceuse+=freespacelen[freespaceid];
 		}
 		if (pass==2)
 		{
@@ -885,6 +1017,7 @@ void assembleblock(const char * block)
 			if (fixedpos && freespaceorgpos[freespaceid]>0 && freespacelen[freespaceid]>freespaceorglen[freespaceid])
 					error(2, "A static freespace may not grow.");
 		}
+		freespacestatic[freespaceid]=fixedpos;
 		if (snespos<0 && mapper==sa1rom) fatalerror("No freespace found in the mapped banks.");
 		if (snespos<0) fatalerror("No freespace found.");
 		bytes+=8;
@@ -944,10 +1077,11 @@ void assembleblock(const char * block)
 				int ratsloc=freespaceorgpos[targetid];
 				int firstbyte=((!stricmp(par, "JSL"))?0x22:0x5C);
 				int pcpos=snestopc(snespos);
-				if (pass==1 && pcpos>=0 && romdata[pcpos]==firstbyte)
+				if (/*pass==1 && */pcpos>=0 && pcpos<romlen_r && romdata_r[pcpos]==firstbyte)
 				{
 					ratsloc=ratsstart(orgpos)+8;
-					removerats(orgpos);
+					freespaceorglen[targetid]=read2(ratsloc-4)+1;
+					if (!freespacestatic[targetid] && pass==1) removerats(orgpos);
 				}
 				else if (ratsloc<0) ratsloc=0;
 				write1(firstbyte);
@@ -958,8 +1092,8 @@ void assembleblock(const char * block)
 					if (start>=num || start<0)
 						error(2, "Don't autoclean a label at the end of a freespace block, you'll remove some stuff you're not supposed to remove.");
 				}
+				//freespaceorglen[targetid]=read2(ratsloc-4)+1;
 				freespaceorgpos[targetid]=ratsloc;
-				freespaceorglen[targetid]=read2(ratsloc+4)+1;
 			}
 			else if (!stricmp(par, "dl"))
 			{
@@ -969,18 +1103,49 @@ void assembleblock(const char * block)
 				if (pass==1 && num>=0)
 				{
 					ratsloc=ratsstart(orgpos)+8;
-					removerats(orgpos);
+					if (!freespacestatic[targetid]) removerats(orgpos);
 				}
 				else if (!ratsloc) ratsloc=0;
 				if ((start==num || start<0) && pass==2)
 					error(2, "Don't autoclean a label at the end of a freespace block, you'll remove some stuff you're not supposed to remove.");
 				write3(num);
 				freespaceorgpos[targetid]=ratsloc;
-				freespaceorglen[targetid]=read2(ratsloc+4)+1;
+				freespaceorglen[targetid]=read2(ratsloc-4)+1;
 			}
 			else error(0, "Broken autoclean command");
 		}
 		else if (pass==0) removerats(getnum(word[1]));
+	}
+	else if (is0("pushpc"))
+	{
+		pushpc[pushpcnum].arch=arch;
+		pushpc[pushpcnum].snespos=snespos;
+		pushpc[pushpcnum].snesstart=startpos;
+		pushpc[pushpcnum].snesposreal=realsnespos;
+		pushpc[pushpcnum].snesstartreal=realstartpos;
+		pushpc[pushpcnum].freeid=freespaceid;
+		pushpc[pushpcnum].freeex=freespaceextra;
+		pushpc[pushpcnum].freest=freespacestart;
+		pushpcnum++;
+		if (snespos&0x7F000000) freespaceid++;
+		snespos=0xFFFFFFFF;
+		startpos=0xFFFFFFFF;
+		realsnespos=0xFFFFFFFF;
+		realstartpos=0xFFFFFFFF;
+	}
+	else if (is0("pullpc"))
+	{
+		if (!pushpcnum) error(0, "pullpc without matching pushpc");
+		pushpcnum--;
+		freespaceend();
+		if (arch!=pushpc[pushpcnum].arch) error(0, "pullpc in another architecture than the pushpc");
+		snespos=pushpc[pushpcnum].snespos;
+		startpos=pushpc[pushpcnum].snesstart;
+		realsnespos=pushpc[pushpcnum].snesposreal;
+		realstartpos=pushpc[pushpcnum].snesstartreal;
+		freespaceid=pushpc[pushpcnum].freeid;
+		freespaceextra=pushpc[pushpcnum].freeex;
+		freespacestart=pushpc[pushpcnum].freest;
 	}
 	else if (is1("namespace"))
 	{
@@ -1026,11 +1191,11 @@ void assembleblock(const char * block)
 	{
 		string name;
 		if (warnxkas && (strchr(thisfilename, '/') || strchr(thisfilename, '\\')))
-			warn0("xkas compatibility warning: incsrc and incbin look for files relative to the patch in native mode, "
-					"but relative to the assembler in emulation mode");
+			warn0("xkas compatibility warning: incsrc and incbin look for files relative to the patch in Asar, "
+					"but xkas looks relative to the assembler.");
 		/*if (emulate) name=dequote(par);
 		else*/ name=S dir(thisfilename)+dequote(par);
-		assemblefile(name);
+		assemblefile(name, false);
 	}
 	else if (is1("incbin"))
 	{
@@ -1084,23 +1249,38 @@ void assembleblock(const char * block)
 	else if (is1("table"))
 	{
 		bool fliporder=false;
-		     if (striend(par, ",ltr")) { fliporder=false; itrim(par, "", ",ltr"); }
-		else if (striend(par, ",rtl")) { fliporder=true;  itrim(par, "", ",rtl"); }
+		if(0);
+		else if (striend(par, ",ltr")) { itrim(par, "", ",ltr"); }
+		else if (striend(par, ",rtl")) { itrim(par, "", ",rtl"); fliporder=true; }
 		string name=S dir(thisfilename)+dequote(par);
 		autoptr<char*> tablecontents=readfile(name);
 		if (!tablecontents) error(0, "File not found");
 		autoptr<char**> tablelines=split(tablecontents, "\n");
-		for (int i=0;i<256;i++) table[i]=((numopcodes+romdata[snestopc(0x00FFDE)]+(romdata[snestopc(0x00FFDF)]<<8))*0x26594131)|0x40028020;
+		for (int i=0;i<256;i++) table[i]=((numopcodes+romdata[snestopc(0x00FFDE)]+(romdata[snestopc(0x00FFDF)]<<8)+i)*0x26594131)|0x40028020;
+			//reading from the write buffer is OK since we just want garbage values
 			//garbage value so people will notice they're doing it wrong (for bonus points: figure out what 0x26594131 is)
-		int charoff=fliporder?3:0;
-		int eqoff=fliporder?2:1;
-		int hexoff=fliporder?0:2;
 		for (int i=0;tablelines[i];i++)
 		{
-			char * tableline=tablelines[i];
+			string tableline=tablelines[i];
 			if (!*tableline) continue;
-			if (strlen(tableline)!=4 || tableline[eqoff]!='=' || !ctype_xdigit(tableline+hexoff, 2)) error(0, "Invalid table file");
-			table[(unsigned char)tableline[charoff]]=strtol(tableline+hexoff, NULL, 16);
+			if (strlen(tableline)<4 || strlen(tableline)&1 || strlen(tableline)>10) error(0, "Invalid table file");
+			if (!fliporder)
+			{
+				if (tableline[3]=='x' || tableline[3]=='X') error(0, "Invalid table file");
+				char * end;
+				table[(unsigned char)tableline[0]]=strtol(tableline+2, &end, 16);
+				if (*end) error(0, "Invalid table file");
+			}
+			else
+			{
+				if (tableline[1]=='x' || tableline[1]=='X') error(0, "Invalid table file");
+				char * eq;
+				unsigned int val=strtol(tableline, &eq, 16);
+				if (eq[0]!='=' || eq[2]) error(0, "Invalid table file");
+				table[(unsigned char)eq[1]]=val;
+			}
+			//if (strlen(tableline)!=4 || tableline[eqoff]!='=' || !ctype_xdigit(tableline+hexoff, 2)) error(0, "Invalid table file");
+			//table[(unsigned char)tableline[charoff]]=strtol(tableline+hexoff, NULL, 16);
 			//autoptr<char**> words=split(tablelines[i], "=");
 			//string ch=fliporder?words[1]:words[0];
 			//string val=fliporder?words[0]:words[1];
@@ -1135,39 +1315,8 @@ void assembleblock(const char * block)
 			if (e) error(0, e);
 		}
 	}
-	else if (is0("pushpc"))
-	{
-		pushpc[pushpcnum].arch1=freespaceid;
-		pushpc[pushpcnum].arch2=freespaceextra;
-		pushpc[pushpcnum].arch3=freespacestart;
-		pushpc[pushpcnum].arch=arch;
-		pushpc[pushpcnum].snespos=snespos;
-		pushpc[pushpcnum].snesstart=startpos;
-		pushpc[pushpcnum].snesposreal=realsnespos;
-		pushpc[pushpcnum].snesstartreal=realstartpos;
-		pushpcnum++;
-		snespos=0xFFFFFFFF;
-		startpos=0xFFFFFFFF;
-		realsnespos=0xFFFFFFFF;
-		realstartpos=0xFFFFFFFF;
-	}
-	else if (is0("pullpc"))
-	{
-		if (!pushpcnum) error(0, "pullpc without matching pushpc");
-		pushpcnum--;
-		freespaceend();
-		if (arch!=pushpc[pushpcnum].arch) error(0, "pullpc in another architecture than the pushpc");
-		snespos=pushpc[pushpcnum].snespos;
-		startpos=pushpc[pushpcnum].snesstart;
-		realsnespos=pushpc[pushpcnum].snesposreal;
-		realstartpos=pushpc[pushpcnum].snesstartreal;
-		freespaceid=pushpc[pushpcnum].arch1;
-		freespaceextra=pushpc[pushpcnum].arch2;
-		freespacestart=pushpc[pushpcnum].arch3;
-	}
 	else if (is1("print"))
 	{
-		if (pass!=2) return;
 		if (!confirmqpar(par)) error(0, "Mismatched parentheses");
 		string out;
 		autoptr<char**> pars=qpsplit(par, ",");
@@ -1176,13 +1325,13 @@ void assembleblock(const char * block)
 			if(0);
 			else if (pars[i][0]=='"') out+=dequote(pars[i]);
 			else if (!stricmp(pars[i], "bytes")) out+=dec(bytes);
+			else if (!stricmp(pars[i], "freespaceuse")) out+=dec(freespaceuse);
 			else if (!stricmp(pars[i], "pc")) out+=hex6(snespos&0xFFFFFF);
-			//else if (!strnicmp(pars[i], "eval(", 5))
-			//{
-			//	
-			//}
+			else if (!strnicmp(pars[i], "dec(", strlen("dec("))) out+=dec(getnum(pars[i]+strlen("dec")));
+			else if (!strnicmp(pars[i], "hex(", strlen("hex("))) out+=hex0(getnum(pars[i]+strlen("hex")));
 			else error(2, "Unknown variable.");
 		}
+		if (pass!=2) return;
 		print(out);
 	}
 	else if (is1("reset"))
@@ -1190,6 +1339,24 @@ void assembleblock(const char * block)
 		if(0);
 		else if (!stricmp(par, "bytes")) bytes=0;
 		else error(2, "Unknown variable.");
+	}
+	else if (is1("padbyte") || is1("padword") || is1("padlong") || is1("paddword"))
+	{
+		int len;
+		if (is("padbyte")) len=1;
+		if (is("padword")) len=2;
+		if (is("padlong")) len=3;
+		if (is("paddword")) len=4;
+		unsigned int val=getnum(par);
+		for (int i=0;i<12;i+=len)
+		{
+			unsigned int tmpval=val;
+			for (int j=0;j<len;j++)
+			{
+				padbyte[i+j]=tmpval;
+				tmpval>>=8;
+			}
+		}
 	}
 	else if (is1("pad"))
 	{
@@ -1199,22 +1366,34 @@ void assembleblock(const char * block)
 		if (num>snespos)
 		{
 			int end=snestopc(num);
-			for (int i=snestopc(snespos);i<end;i++) romdata[i]=padbyte;
+			int start=snestopc(snespos);
+			int len=end-start;
+			for (int i=0;i<len;i++) romdata[start+i]=padbyte[i%12];
 			snespos=num;
 		}
 	}
-	else if (is1("padbyte"))
+	else if (is1("fillbyte") || is1("fillword") || is1("filllong") || is1("filldword"))
 	{
-		padbyte=getnum(par);
+		int len;
+		if (is("fillbyte")) len=1;
+		if (is("fillword")) len=2;
+		if (is("filllong")) len=3;
+		if (is("filldword")) len=4;
+		unsigned int val=getnum(par);
+		for (int i=0;i<12;i+=len)
+		{
+			unsigned int tmpval=val;
+			for (int j=0;j<len;j++)
+			{
+				fillbyte[i+j]=tmpval;
+				tmpval>>=8;
+			}
+		}
 	}
 	else if (is1("fill"))
 	{
 		int num=getnum(par);
-		for (int i=0;i<num;i++) write1(fillbyte);
-	}
-	else if (is1("fillbyte"))
-	{
-		fillbyte=getnum(par);
+		for (int i=0;i<num;i++) write1(fillbyte[i%12]);
 	}
 	//else if (is2("set"))
 	//{
@@ -1225,6 +1404,7 @@ void assembleblock(const char * block)
 		if (!stricmp(par, "65816")) { arch=arch_65816; return; }
 		if (!stricmp(par, "spc700-inline")) { arch=arch_spc700_inline; return; }
 		if (!stricmp(par, "spc700-raw")) { arch=arch_spc700_raw; checksum=false; return; }
+		if (!stricmp(par, "superfx")) { arch=arch_superfx; return; }
 	}
 	else if (is2("math"))
 	{
@@ -1256,4 +1436,67 @@ void assembleblock(const char * block)
 	}
 	else if (is0("{") || is0("}")) {}
 	else error(1, "Unknown command.");
+}
+
+bool assemblemapper(char** word, int numwords)
+{
+	if(0);
+	else if (is0("lorom"))
+	{
+		//this also makes xkas set snespos to $008000 for some reason
+		mapper=lorom;
+	}
+	else if (is0("hirom"))
+	{
+		//xkas makes this point to $C00000
+		mapper=hirom;
+	}
+	else if (is0("sfxrom"))
+	{
+		mapper=sfxrom;
+		fastrom=false;
+	}
+	else if (is0("norom"))
+	{
+		//$000000 would be the best snespos for this, but I don't care
+		mapper=norom;
+		fastrom=false;
+	}
+	else if (is("sa1rom"))
+	{
+		fastrom=false;
+		if (par)
+		{
+			if (word[2]) error(0, "Invalid mapper.");
+			if (!isdigit(par[0]) || par[1]!=',' ||
+					!isdigit(par[2]) || par[3]!=',' ||
+					!isdigit(par[4]) || par[5]!=',' ||
+					!isdigit(par[6]) || par[7]) error(0, "Invalid mapper.");
+			int len;
+			autoptr<char**> pars=qpsplit(par, ",", &len);
+			if (len!=4) error(0, "Invalid mapper.");
+			if (!ctype_digit(pars[0])) error(0, "Invalid mapper.");
+			if (!ctype_digit(pars[1])) error(0, "Invalid mapper.");
+			if (!ctype_digit(pars[2])) error(0, "Invalid mapper.");
+			if (!ctype_digit(pars[3])) error(0, "Invalid mapper.");
+			sa1banks[0]=(par[0]-'0')<<20;
+			sa1banks[1]=(par[2]-'0')<<20;
+			sa1banks[4]=(par[4]-'0')<<20;
+			sa1banks[5]=(par[6]-'0')<<20;
+		}
+		else
+		{
+			sa1banks[0]=0<<20;
+			sa1banks[1]=1<<20;
+			sa1banks[4]=2<<20;
+			sa1banks[5]=3<<20;
+		}
+		mapper=sa1rom;
+	}
+	else if (is0("header"))
+	{
+		//detected elsewhere; ignoring for familiarity
+	}
+	else return false;
+	return true;
 }

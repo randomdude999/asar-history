@@ -1,4 +1,8 @@
-#if (defined(linux) || defined(__sun__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && !defined(stricmp)
+#if (defined(__sun__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && !defined(linux)
+#error Please use -Dlinux on non-Linux Unix-likes.
+#endif
+
+#if defined(linux) && !defined(stricmp)
 #error Please use -Dstricmp=strcasecmp on Unix-like systems.
 #endif
 
@@ -9,6 +13,8 @@
 #include "scapegoat.hpp"
 #include "libstr.h"
 #include "libsmw.h"
+extern unsigned const char * romdata_r;
+extern int romlen_r;
 
 struct errfatal {};
 struct errline : public errfatal {};
@@ -25,13 +31,12 @@ template<typename t> void error(int neededpass, const char * str);
 //void write3(unsigned int num);
 //void write4(unsigned int num);
 
-extern int snespos;
 extern int pass;
 extern bool foundlabel;
 
 //extern bool emulate;
 
-enum { arch_null, arch_65816, arch_spc700_inline, arch_spc700_raw };
+enum { arch_null, arch_65816, arch_spc700_inline, arch_spc700_raw, arch_superfx };
 extern int arch;
 
 template<typename t> void error(int neededpass, const char * e_);
@@ -58,11 +63,12 @@ int read1(int snespos);
 int read2(int snespos);
 int read3(int snespos);
 
+bool assemblemapper(char** word, int numwords);
+
 extern int snespos;
 extern int realsnespos;
 extern int startpos;
 extern int realstartpos;
-extern int romlen;
 
 extern int bytes;
 

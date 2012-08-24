@@ -27,67 +27,8 @@ bool asblock_65816(char** word, int numwords)
 	int num;
 	int len=0;//declared here for A->generic fallback
 	if(0);
-	else if (is0("lorom"))
-	{
-		//this also makes xkas set snespos to $008000 for some reason
-		mapper=lorom;
-	}
-	else if (is0("hirom"))
-	{
-		//xkas makes this point to $C00000
-		mapper=hirom;
-	}
-	else if (is0("norom"))
-	{
-		//$000000 would be the best snespos for this, but I don't care
-		mapper=norom;
-		fastrom=false;
-	}
-	else if (is0("spc7110"))
-	{
-		mapper=spc7110;
-		if(romlen < 16*1024*1024+1){
-			romdata = (unsigned char *)realloc(romdata, sizeof(unsigned char)*16*1024*1024*16);
-			if (romdata == NULL) error(0, "Out of memory");
-			memset((char*)romdata+16*1024*1024, 0x00, 16*1024*1024*15);
-		}
-	}
-	else if (is("sa1rom"))
-	{
-		fastrom=false;
-		if (par)
-		{
-			if (word[2]) error(0, "Invalid mapper.");
-			if (!isdigit(par[0]) || par[1]!=',' || 
-					!isdigit(par[2]) || par[3]!=',' || 
-					!isdigit(par[4]) || par[5]!=',' || 
-					!isdigit(par[6]) || par[7]) error(0, "Invalid mapper.");
-			int len;
-			autoptr<char**> pars=qpsplit(par, ",", &len);
-			if (len!=4) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[0])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[1])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[2])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[3])) error(0, "Invalid mapper.");
-			sa1banks[0]=par[0]-'0';
-			sa1banks[1]=par[2]-'0';
-			sa1banks[4]=par[4]-'0';
-			sa1banks[5]=par[6]-'0';
-		}
-		else
-		{
-			sa1banks[0]=0<<20;
-			sa1banks[1]=1<<20;
-			sa1banks[4]=2<<20;
-			sa1banks[5]=3<<20;
-		}
-		mapper=sa1rom;
-	}
-	else if (is0("header"))
-	{
-		//detected elsewhere; ignoring for familiarity
-	}
-#define getvars(optbank) num=getnum(par); if (word[0][3]=='.') { len=getlenfromchar(word[0][4]); word[0][3]='\0'; } else len=getlen(par, optbank)
+	else if (assemblemapper(word, numwords)) {}
+#define getvars(optbank) num=(pass!=0)?getnum(par):0; if (word[0][3]=='.') { len=getlenfromchar(word[0][4]); word[0][3]='\0'; } else len=getlen(par, optbank)
 #define match(left, right) (word[1] && stribegin(par, left) && striend(par, right))
 #define init(left, right) itrim(par, left, right); getvars(false)
 #define bankoptinit(left, right) itrim(par, left, right); getvars(true)
@@ -104,12 +45,12 @@ bool asblock_65816(char** word, int numwords)
 																					 else { write1(byte); write2(num); } return true; }
 #define as_xy(  op, byte) if (is(op)) { if (len==1) { write1(byte); write1(num); } \
 																					 else {  write1(byte); write2(num); } return true; }
-#define as_rep( op, byte) if (is(op)) { for (int i=0;i<num;i++) { write1(byte); } return true; }
+#define as_rep( op, byte) if (is(op)) { if (pass==0) num=getnum(par); for (int i=0;i<num;i++) { write1(byte); } return true; }
 #define as_rel1(op, byte) if (is(op)) { int pos=(!foundlabel)?num:num-((snespos&0xFFFFFF)+2); write1(byte); write1(pos); \
-													if (pass==2 && foundlabel && (pos<-128 || pos>127)) error(2, "Relative branch out of bounds"); \
+													if (pass==2 && foundlabel && (pos<-128 || pos>127)) error(2, S"Relative branch out of bounds (distance is "+dec(pos)+")"); \
 													return true; }
 #define as_rel2(op, byte) if (is(op)) { int pos=(!foundlabel)?num:num-((snespos&0xFFFFFF)+3); write1(byte); write2(pos);\
-											if (pass==2 && foundlabel && (pos<-32768 || pos>32767)) error(2, "Relative branch out of bounds"); \
+											if (pass==2 && foundlabel && (pos<-32768 || pos>32767)) error(2, S"Relative branch out of bounds (distance is "+dec(pos)+")"); \
 											return true; }
 #define the8(offset, len) as##len("ORA", offset+0x00); as##len("AND", offset+0x20); as##len("EOR", offset+0x40); as##len("ADC", offset+0x60); \
 													as##len("STA", offset+0x80); as##len("LDA", offset+0xA0); as##len("CMP", offset+0xC0); as##len("SBC", offset+0xE0)
@@ -135,7 +76,7 @@ bool asblock_65816(char** word, int numwords)
 		as0("WAI", 0xCB); as0("CLD", 0xD8); as0("PHX", 0xDA); as0("STP", 0xDB);
 		as0("INX", 0xE8); as0("NOP", 0xEA); as0("XBA", 0xEB); as0("SED", 0xF8);
 		as0("PLX", 0xFA); as0("XCE", 0xFB);
-		as1("BRK", 0x00); as1("COP", 0x02);
+		as1("BRK", 0x00); as1("COP", 0x02); as1("WDM", 0x42);
 		//as0("DEA", 0x3A); as0("INA", 0x1A); as0("TAD", 0x5B); as0("TDA", 0x7B);//nobody cares about these, but keeping them does no harm
 		//as0("TAS", 0x1B); as0("TSA", 0x3B); as0("SWA", 0xEB);                  //actually, it does: it may make some users think it's correct.
 		end();
@@ -157,7 +98,7 @@ bool asblock_65816(char** word, int numwords)
 		as_rep("INC", 0x1A); as_rep("DEC", 0x3A); as_rep("INX", 0xE8); as_rep("DEX", 0xCA);
 		as_rep("INY", 0xC8); as_rep("DEY", 0x88); as_rep("NOP", 0xEA);
 		as1("REP", 0xC2); as1("SEP", 0xE2);
-		as1("BRK", 0x00); as1("COP", 0x02);
+		as1("BRK", 0x00); as1("COP", 0x02); as1("WDM", 0x42);
 		end();
 	}
 	onlythe8("(", ",s),y", 0x13);

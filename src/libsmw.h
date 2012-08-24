@@ -9,45 +9,46 @@ enum mapper_t {
 	lorom,
 	hirom,
 	sa1rom,
+	sfxrom,
 	norom,
-	spc7110
 } extern mapper;
 
 extern int sa1banks[8];//only 0, 1, 4, 5 are used
 
-#define CONV_UNHEADERED 0
-#define CONV_HEADERED 1
-#define CONV_PCTOSNES 2
-#define CONV_SNESTOPC 0
-#define CONV_LOROM 0
-int convaddr(int addr, int mode);
+//#define CONV_UNHEADERED 0
+//#define CONV_HEADERED 1
+//#define CONV_PCTOSNES 2
+//#define CONV_SNESTOPC 0
+//#define CONV_LOROM 0
+//int convaddr(int addr, int mode);
 //Tip: Use snestopc and pctosnes if possible.
 
 inline int snestopc(int addr)
 {
-	if (mapper==spc7110){ //not fully tested yet -- I'll update you if I find and fix a bug
-		if (addr>0xFFFFFFF+0xC00000)
-			return -1;
-		if (addr<0xC00000)
-			return addr&0x3FFFFF;
-		return addr-0xC00000;
-	}
 	if (addr<0 || addr>0xFFFFFF) return -1;//not 24bit
 	if (mapper==lorom)
 	{
-		if ((addr&0x700000)==0x700000 ||//wram, sram
-			(addr&0x008000)==0x000000)//hardware regs, ram mirrors, rom mirrors, other strange junk
+		if ((addr&0xF00000)==0x700000 ||//wram, sram
+			(addr&0x408000)==0x000000)//hardware regs, ram mirrors, rom mirrors, other strange junk
 				return -1;
 		addr=((addr&0x7F0000)>>1|(addr&0x7FFF));
 		return addr;
 	}
 	if (mapper==hirom)
 	{
-		if ((((addr&0x00F000)>0x5000 && (addr&0x00F000)<0x8000) && 
-		        ((addr&0xF00000)>0x100000 && (addr&0xF00000)<0x400000))||//wram, sram
-			(addr&0x408000)==0x000000)//hardware regs, ram mirrors, other strange junk kinda untested, should work
+		if ((addr&0xFE0000)==0x7E0000 ||//wram
+			(addr&0x408000)==0x000000)//hardware regs, ram mirrors, other strange junk
 				return -1;
 		return addr&0x3FFFFF;
+	}
+	if (mapper==sfxrom)
+	{
+		if ((addr&0x600000)==0x600000 ||//wram, sram, open bus
+			(addr&0x408000)==0x000000 ||//hardware regs, ram mirrors, rom mirrors, other strange junk
+			(addr&0x800000)==0x800000)//fastrom isn't valid either in superfx
+				return -1;
+		if (addr&0x400000) return addr&0x3FFFFF;
+		else return (addr&0x7F0000)>>1|(addr&0x7FFF);
 	}
 	if (mapper==sa1rom)
 	{

@@ -187,7 +187,6 @@ bool confirmquotes(const char * str)
 
 bool confirmqpar(const char * str)
 {
-	int par=0;
 	for (int i=0;str[i];)
 	{
 		skippar(str[i], i++, return false);
@@ -553,6 +552,10 @@ static inline const char * htmlencode(const char * text, bool allowhtml)
 		{
 			out+='\x09';
 		}
+		else if (c=='\x0A')//linebreak
+		{
+			out+='\n';
+		}
 		else if (c=='\x0F')//restore
 		{
 			b=false;
@@ -575,7 +578,7 @@ static inline const char * htmlencode(const char * text, bool allowhtml)
 		}
 		else if ((unsigned char)c<0x20)
 		{
-			out+="\xEF\xBF\xBD";//use the replacement character for various junk (for example imamelia's italics)
+			out+="\xEF\xBF\xBD";//use the replacement character for various junk
 		}
 		else
 		{

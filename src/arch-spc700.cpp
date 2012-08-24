@@ -12,7 +12,7 @@ static void inline_finalizeorg()
 	{
 		int pcpos=snestopc(writesizeto&0xFFFFFF);
 		if (pcpos<0) error(2, S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-		int num=snespos-startpos-4;
+		int num=snespos-startpos;
 		romdata[pcpos  ]=num    ;
 		romdata[pcpos+1]=num>> 8;
 	}
@@ -23,11 +23,11 @@ static void inline_org(int num)
 {
 	inline_finalizeorg();
 	if (num&~0xFFFF) error(0, "Address out of bounds");
-	snespos=num;
-	startpos=num;
 	writesizeto=realsnespos;
 	write2(0x0000);
-	write2(snespos);
+	write2(num);
+	snespos=num;
+	startpos=num;
 }
 
 static void inline_leavearch()
@@ -62,15 +62,57 @@ static bool matchandwrite(const char * str, const char * left, const char * righ
 	return true;
 }
 
-static bool bitmatch(const char * str, string& math, int& bit)
+static bool bitmatch(const char * opnamein, string& opnameout, const char * str, string& math, int& bit)
 {
+	const char * opnameend=strchr(opnamein, '\0');
 	const char * dot=strqrchr(str, '.');
-	if (!dot || !isdigit(dot[1]) || dot[2]) return false;
-	bit=atoi(dot+1);
-	if (bit>=8) return false;
-	math=substr(str, dot-str);
+	if (dot && isdigit(dot[1]) && !dot[2])
+	{
+		bit=atoi(dot+1);
+		if (bit>=8) return false;
+		math=substr(str, dot-str);
+		if (opnameend[-1]=='1') opnameout=substr(opnamein, opnameend-opnamein-1);
+		else opnameout=opnamein;
+		return true;
+	}
+	if (opnameend[-1]>='0' && opnameend[-1]<='7')
+	{
+		math=str;
+		bit=opnameend[-1]-'0';
+		opnameout=substr(opnamein, opnameend-opnamein-1);
+		return true;
+	}
+	return false;
+}
+
+#define isop(test) (!stricmp(op, test))
+static bool assinglebitwithc(const char * op, const char * math, int bits)
+{
+	int num;
+	if (math[0]=='!')
+	{
+		if(0);
+		else if (isop("or")) write1(0x2A);
+		else if (isop("and")) write1(0x6A);
+		else return false;
+		num=getnum(math+1);
+	}
+	else
+	{
+		if(0);
+		else if (isop("or")) write1(0x0A);
+		else if (isop("and")) write1(0x4A);
+		else if (isop("eor")) write1(0x8A);
+		else if (isop("mov")) write1(0xAA);
+		else if (isop("not")) write1(0xEA);
+		else return false;
+		num=getnum(math);
+	}
+	if (num>=0x2000) error(2, "Address out of bounds");
+	write2((bits<<13)|num);
 	return true;
 }
+#undef isop
 
 bool asblock_spc700(char** word, int numwords)
 {
@@ -86,7 +128,7 @@ bool asblock_spc700(char** word, int numwords)
 	else if (arch==arch_spc700_inline && is1("org"))
 	{
 		int num=getnum(par);
-		if (foundlabel) error(0, "skip Label is not valid");
+		if (foundlabel) error(0, "org Label is not valid");
 		inline_org(num);
 	}
 	else if (arch==arch_spc700_inline && is1("arch"))
@@ -132,16 +174,17 @@ bool asblock_spc700(char** word, int numwords)
 	}
 	else if (numwords==2)
 	{
-		string tmp=par;
 		int numwords;
 		autoptr<char*> parcpy=strdup(par);
 		autoptr<char**> arg=qpsplit(parcpy, ",", &numwords);
 		if (numwords==1)
 		{
+			string op;
 			string math;
 			int bits;
+#define begin(str) (!strncasecmp(word[0], str, strlen(str)))
 #define isop(str) (!stricmp(word[0], str))
-#define isam(str) (!stricmp(str, arg[0]))
+#define isam(str) (!stricmp(arg[0], str))
 #define ismatch(left, right) (matchandwrite(arg[0], left, right, math))
 #define eq(str) if (isam(str))
 #define w0(hex) do { write1(hex); return true; } while(0)
@@ -149,7 +192,7 @@ bool asblock_spc700(char** word, int numwords)
 #define w2(hex) do { write1(hex); write2(getnum(math)); return true; } while(0)
 #define wv(hex1, hex2) do { if (getlen(math)==1) { write1(hex1); write1(getnum(math)); } else { write1(hex2); write2(getnum(math)); } return true; } while(0)
 #define wr(hex) do { int len=getlen(math); int num=getnum(math); int pos=(len==1)?num:num-(snespos+2); write1(hex); write1(pos); \
-								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, "Relative branch out of bounds"); \
+								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, S"Relative branch out of bounds (distance is "+dec(pos)+")"); \
 								return true; } while(0)
 #define op0(str, hex) if (isop(str)) w0(hex)
 #define op1(str, hex) if (isop(str)) w1(hex)
@@ -201,11 +244,11 @@ bool asblock_spc700(char** word, int numwords)
 				op1("rol", 0x3B);
 				op1("ror", 0x7B);
 			}
-			if (bitmatch(arg[0], math, bits))
+			if (bitmatch(word[0], op, arg[0], math, bits))
 			{
-				if(0);
-				else if (is("set1")) write1(0x02|(bits<<5));
-				else if (is("clr1")) write1(0x12|(bits<<5));
+				if (assinglebitwithc(op, math, bits)) return true;
+				else if (!stricmp(op, "set")) write1(0x02|(bits<<5));
+				else if (!stricmp(op, "clr")) write1(0x12|(bits<<5));
 				else return false;
 				int num=getnum(math);
 				if (num<0 || num>=0x100) error(2, "Address out of bounds");
@@ -214,7 +257,7 @@ bool asblock_spc700(char** word, int numwords)
 			}
 			if (true)
 			{
-#define math arg[0]
+				math=arg[0];
 				if (isop("tcall"))
 				{
 					int num=getnum(math);
@@ -242,7 +285,6 @@ bool asblock_spc700(char** word, int numwords)
 				opr("bcs", 0xB0);
 				opr("bne", 0xD0);
 				opr("beq", 0xF0);
-#undef math
 			}
 #undef isop
 #undef isam
@@ -284,36 +326,17 @@ bool asblock_spc700(char** word, int numwords)
 								write1(opcode); write1(getnum(math1)); write1(pos); return true; } while(0)
 			string s1;
 			string s2;
+			string op;
+			string math;
 			int bits;
-			if (!stricmp(arg[0], "c") && bitmatch(arg[1], s1, bits))
+#define isop(test) (!stricmp(op, test))
+			if (!stricmp(arg[0], "c") && bitmatch(word[0], op, arg[1], math, bits))
 			{
-				int num;
-				if (arg[1][0]=='!')
-				{
-					if(0);
-					else if (is("or1")) write1(0x2A);
-					else if (is("and1")) write1(0x6A);
-					else return false;
-					num=getnum((const char*)s1+1);
-				}
-				else
-				{
-					if(0);
-					else if (is("or1")) write1(0x0A);
-					else if (is("and1")) write1(0x4A);
-					else if (is("eor1")) write1(0x8A);
-					else if (is("mov1")) write1(0xAA);
-					else if (is("not1")) write1(0xEA);
-					else return false;
-					num=getnum(s1);
-				}
-				if (num>=0x2000) error(2, "Address out of bounds");
-				write2((bits<<13)|num);
-				return true;
+				if (assinglebitwithc(op, math, bits)) return true;
 			}
-			if (bitmatch(arg[0], s1, bits))
+			if (bitmatch(word[0], op, arg[0], s1, bits))
 			{
-				if (is("mov1") && !stricmp(arg[1], "c"))
+				if (isop("mov") && !stricmp(arg[1], "c"))
 				{
 					int num=getnum(s1);
 					if (num>=0x2000) error(2, "Address out of bounds");
@@ -322,8 +345,8 @@ bool asblock_spc700(char** word, int numwords)
 					return true;
 				}
 				if(0);
-				else if (is("bbs1")) write1(0x03|(bits<<5));
-				else if (is("bbc1")) write1(0x13|(bits<<5));
+				else if (isop("bbs")) write1(0x03|(bits<<5));
+				else if (isop("bbc")) write1(0x13|(bits<<5));
 				else return false;
 				int num=getnum(s1);
 				if (num>=0x100) error(2, "Address out of bounds");
@@ -331,12 +354,15 @@ bool asblock_spc700(char** word, int numwords)
 				write1(getnum(arg[1])-(snespos+1));
 				return true;
 			}
+#undef isop
 			if (is("mov"))
 			{
 				//cc("(x)+"   , "a"      ) w0(0xAF);//these two are just confusing
+				if (iscc("(x)+", "a")) error(0, "Use (x+) instead.");
 				cc("(x+)"   , "a"      ) w0(0xAF);
 				cc("(x)"    , "a"      ) w0(0xC6);
 				//cc("a"      , "(x)+"   ) w0(0xBF);
+				if (iscc("a", "(x)+")) error(0, "Use (x+) instead.");
 				cc("a"      , "(x+)"   ) w0(0xBF);
 				cc("a"      , "(x)"    ) w0(0xE6);
 				cc("a"      , "x"      ) w0(0x7D);

@@ -9,4 +9,5 @@ const char * libcon_question(const char * desc, const char * defval);
 bool libcon_question_bool(const char * desc, bool defval);
 void libcon_end();
 void libcon_badusage();
+void libcon_pause();
 extern bool libcon_interactive;

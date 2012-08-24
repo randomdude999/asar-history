@@ -3,23 +3,22 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
-#include "asar.h"
 #include "autoarray.h"
 #include "scapegoat.hpp"
 #include "libstr.h"
 #include "libsmw.h"
-
-#define strncasecmp strncasecmp
+#include "asar.h"
 
 bool math_pri=true;
 bool math_round=false;
 
-int bp(const char * str)
-{
-	throw str;
-	return 0;
-}
-#define error(str) bp(str)
+//int bp(const char * str)
+//{
+//	throw str;
+//	return 0;
+//}
+//#define error(str) bp(str)
+#define error(str) throw str
 static const char * str;
 
 static long double getnumcore();
@@ -79,49 +78,102 @@ int numuserfuncargs;
 
 int snestopc_pick(int addr);
 
+static long double validaddr(long double in, long double len)
+{
+	int addr=snestopc_pick(in);
+	if (addr<0 || addr+len-1>romlen_r) return 0;
+	else return 1;
+}
+
 static long double read1(long double in)
 {
 	int addr=snestopc_pick(in);
-	if (addr<0) error("Invalid address.");
-	else if (addr+0>romlen) error("Address out of bounds.");
+	if (addr<0) error("read1(): Address doesn't map to ROM.");
+	else if (addr+0>romlen_r) error("Address out of bounds.");
 	else return
-			 romdata[addr  ]     ;
+			 romdata_r[addr  ]     ;
 	return 0;
 }
 
 static long double read2(long double in)
 {
 	int addr=snestopc_pick(in);
-	if (addr<0) error("Invalid address.");
-	else if (addr+1>romlen) error("Address out of bounds.");
+	if (addr<0) error("read2(): Address doesn't map to ROM.");
+	else if (addr+1>romlen_r) error("Address out of bounds.");
 	else return
-			 romdata[addr  ]    |
-			(romdata[addr+1]<< 8);
+			 romdata_r[addr  ]    |
+			(romdata_r[addr+1]<< 8);
 	return 0;
 }
 
 static long double read3(long double in)
 {
 	int addr=snestopc_pick(in);
-	if (addr<0) error("Invalid address.");
-	else if (addr+2>romlen) error("Address out of bounds.");
+	if (addr<0) error("read3(): Address doesn't map to ROM.");
+	else if (addr+2>romlen_r) error("Address out of bounds.");
 	else return
-			 romdata[addr  ]     |
-			(romdata[addr+1]<< 8)|
-			(romdata[addr+2]<<16);
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8)|
+			(romdata_r[addr+2]<<16);
 	return 0;
 }
 
 static long double read4(long double in)
 {
 	int addr=snestopc_pick(in);
-	if (addr<0) error("Invalid address.");
-	else if (addr+3>romlen) error("Address out of bounds.");
+	if (addr<0) error("read4(): Address doesn't map to ROM.");
+	else if (addr+3>romlen_r) error("Address out of bounds.");
 	else return
-			 romdata[addr  ]     |
-			(romdata[addr+1]<< 8)|
-			(romdata[addr+2]<<16)|
-			(romdata[addr+3]<<24);
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8)|
+			(romdata_r[addr+2]<<16)|
+			(romdata_r[addr+3]<<24);
+	return 0;
+}
+
+static long double read1s(long double in, long double def)
+{
+	int addr=snestopc_pick(in);
+	if (addr<0) return def;
+	else if (addr+0>romlen_r) return def;
+	else return
+			 romdata_r[addr  ]     ;
+	return 0;
+}
+
+static long double read2s(long double in, long double def)
+{
+	int addr=snestopc_pick(in);
+	if (addr<0) return def;
+	else if (addr+1>romlen_r) return def;
+	else return
+			 romdata_r[addr  ]    |
+			(romdata_r[addr+1]<< 8);
+	return 0;
+}
+
+static long double read3s(long double in, long double def)
+{
+	int addr=snestopc_pick(in);
+	if (addr<0) return def;
+	else if (addr+2>romlen_r) return def;
+	else return
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8)|
+			(romdata_r[addr+2]<<16);
+	return 0;
+}
+
+static long double read4s(long double in, long double def)
+{
+	int addr=snestopc_pick(in);
+	if (addr<0) return def;
+	else if (addr+3>romlen_r) return def;
+	else return
+			 romdata_r[addr  ]     |
+			(romdata_r[addr+1]<< 8)|
+			(romdata_r[addr+2]<<16)|
+			(romdata_r[addr+3]<<24);
 	return 0;
 }
 
@@ -140,11 +192,7 @@ static long double getnumcore()
 	if (*str=='$')
 	{
 		if (!isxdigit(str[1])) error("Invalid hex value.");
-		if (str[1]=='0' && tolower(str[2])=='x')//to block $0xEA
-		{
-			str+=2;
-			return 0;
-		}
+		while (str[1]=='0') str++;//to block $0xEA
 		return strtol(str+1, (char**)&str, 16);
 	}
 	if (*str=='%')
@@ -199,7 +247,7 @@ static long double getnumcore()
 			long double rval;
 			for (int i=0;i<numuserfunc;i++)
 			{
-				if (strlen(userfunc[i].name)==len && !strncmp(start, userfunc[i].name, len))
+				if ((int)strlen(userfunc[i].name)==len && !strncmp(start, userfunc[i].name, len))
 				{
 					if (userfunc[i].numargs!=numparams) error("Wrong number of parameters to function.");
 					char ** oldfuncargnames=funcargnames;
@@ -218,6 +266,7 @@ static long double getnumcore()
 					return rval;
 				}
 			}
+			if (*str=='_') str++;
 #define func(name, numpar, code)                                   \
 					if (!strncasecmp(start, name, len))                      \
 					{                                                        \
@@ -246,6 +295,15 @@ static long double getnumcore()
 			func("read2", 1, read2(params[0]));
 			func("read3", 1, read3(params[0]));
 			func("read4", 1, read4(params[0]));
+			func("read1", 2, read1s(params[0], params[1]));
+			func("read2", 2, read2s(params[0], params[1]));
+			func("read3", 2, read3s(params[0], params[1]));
+			func("read4", 2, read4s(params[0], params[1]));
+			func("canread1", 1, validaddr(params[0], 1));
+			func("canread2", 1, validaddr(params[0], 2));
+			func("canread3", 1, validaddr(params[0], 3));
+			func("canread4", 1, validaddr(params[0], 4));
+			func("canread", 2, validaddr(params[0], params[1]));
 			//varfunc("min", {
 			//		if (!numparams) error("Wrong number of parameters to function.");
 			//		double minval=params[0];
@@ -280,7 +338,7 @@ static long double getnumcore()
 			//if (start!=str) error("Internal error. Send this patch to Alcaro.");//not gonna add sublabel/macrolabel support here
 			if (i==-1) forwardlabel=true;
 			return (int)i&0xFFFFFF;
-//#define const(name, val) if (!strnicmp(start, name, len)) return val
+//#define const(name, val) if (!strncasecmp(start, name, len)) return val
 //			const("pi", 3.141592653589793238462);
 //			const("\xCF\x80", 3.141592653589793238462);
 //			const("\xCE\xA0", 3.141592653589793238462);//case insensitive pi, yay
@@ -292,52 +350,72 @@ static long double getnumcore()
 	error("Invalid number.");
 }
 
+static long double sanitize(long double val)
+{
+	if (val!=val) error("NaN encountered.");
+	if (math_round) return (int)val;
+	return val;
+}
+
 static long double getnum()
 {
 	while (*str==' ') str++;
-#define prefix(name, func) if (!strncmp(str, name, strlen(name))) { str+=strlen(name); long double val=getnum(); return (func); }
+#define prefix(name, func) if (!strncasecmp(str, name, strlen(name))) { str+=strlen(name); long double val=getnum(); return sanitize(func); }
 	prefix("-", -val);
 	prefix("~", ~(int)val);
 	prefix("+", val);
 	//prefix("#", val);
 #undef prefix
-	return getnumcore();
+	return sanitize(getnumcore());
 }
+
+extern autoarray<int> poslabels;
+extern autoarray<int> neglabels;
 
 static long double eval(int depth)
 {
+	if (str[0]=='+' || str[0]=='-')
+	{
+		int i;
+		char top=str[0];
+		for (i=0;str[i] && str[i]!=')';i++)
+		{
+			if (str[i]!=top) goto notposneglabel;
+		}
+		str+=i;
+		foundlabel=true;
+		if (top=='+') forwardlabel=true;
+		if (top=='+') return labelval(S":pos_"+dec(i)+"_"+dec(poslabels[i]))&0xFFFFFF;
+		else             return labelval(S":neg_"+dec(i)+"_"+dec(neglabels[i]))&0xFFFFFF;
+	}
+notposneglabel:
 	recurseblock rec;
 	long double left=getnum();
-	if (left!=left) error("NaN encountered.");
 	long double right;
 	while (*str==' ') str++;
 	while (*str && *str!=')' && *str!=',')
 	{
 		while (*str==' ') str++;
 		if (math_round) left=(int)left;
-#define oper(name, thisdepth, contents)                  \
-			if (!strncmp(str, name, strlen(name)))             \
-			{                                                  \
-				if (math_pri)                                    \
-				{                                                \
-					if (depth<=thisdepth)                          \
-					{                                              \
-						str+=strlen(name);                           \
-						right=eval(thisdepth+1);                     \
-						if (right!=right) error("NaN encountered."); \
-						if (math_round) right=(int)right;            \
-					}                                              \
-					else return left;                              \
-				}                                                \
-				else                                             \
-				{                                                \
-					str+=strlen(name);                             \
-					right=getnum();                                \
-					if (math_round) right=(int)right;              \
-				}                                                \
-				left=(contents);                                 \
-				if (left!=left) error("NaN encountered.");       \
-				continue;                                        \
+#define oper(name, thisdepth, contents)      \
+			if (!strncmp(str, name, strlen(name))) \
+			{                                      \
+				if (math_pri)                        \
+				{                                    \
+					if (depth<=thisdepth)              \
+					{                                  \
+						str+=strlen(name);               \
+						right=eval(thisdepth+1);         \
+					}                                  \
+					else return left;                  \
+				}                                    \
+				else                                 \
+				{                                    \
+					str+=strlen(name);                 \
+					right=getnum();                    \
+				}                                    \
+				left=sanitize(contents);             \
+				continue;                            \
 			}
 		oper("**", 4, pow(left, right));
 		oper("*", 3, left*right);
@@ -353,7 +431,6 @@ static long double eval(int depth)
 		error("Unknown operator.");
 #undef oper
 	}
-	if (math_round) left=(int)left;
 	return left;
 }
 
@@ -368,7 +445,11 @@ long double math(const char * s, const char ** e)
 	{
 		str=s;
 		long double rval=eval(0);
-		if (*str) error("Mismatched parentheses.");
+		if (*str)
+		{
+			if (*str==',') error("Invalid input.");
+			else error("Mismatched parentheses.");
+		}
 		*e=NULL;
 		return rval;
 	}

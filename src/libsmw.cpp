@@ -131,7 +131,7 @@ static inline int trypcfreespace(int start, int end, int size, int banksize)
 //It automatically adds a RATS tag.
 int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankborders)
 {
-	if (!size) return 1;//in case someone protects zero bytes for some dumb reason.
+	if (!size) return 0x1234;//in case someone protects zero bytes for some dumb reason.
 		//You can write zero bytes to anywhere, so I'll just return something that removerats will ignore.
 	if (size>0x10000) return -1;
 	size+=8;
@@ -139,14 +139,13 @@ int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankbo
 	{
 		if (size>0x8008 && respectbankborders) return -1;
 	rebootlorom:
-		for (int tryingexpanded=(romlen>0x200000 && !isforcode);tryingexpanded>=0;tryingexpanded--)
+		if (romlen>0x200000 && !isforcode)
 		{
-			int endpos=romlen;
-			if (endpos==0x400000) endpos=0x380000;
-			if (!tryingexpanded && romlen>endpos) endpos=0x200000;
-			int pos=trypcfreespace(tryingexpanded?0x200000-8:0x80000, endpos, size, respectbankborders?0x7FFF:0xFFFFFF);
+			int pos=trypcfreespace(0x200000-8, (romlen<0x400000)?romlen:0x400000, size, respectbankborders?0x7FFF:0xFFFFFF);
 			if (pos>=0) return pos;
 		}
+		int pos=trypcfreespace(0x80000, (romlen<0x200000)?romlen:0x200000, size, respectbankborders?0x7FFF:0xFFFFFF);
+		if (pos>=0) return pos;
 		if (autoexpand)
 		{
 			if(0);
@@ -184,6 +183,11 @@ int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankbo
 	{
 		if (isforcode) return -1;
 		return trypcfreespace(0, romlen, size, 0xFFFF);
+	}
+	if (mapper==sfxrom)
+	{
+		if (isforcode) return -1;
+		return trypcfreespace(0, romlen, size, 0x7FFF);
 	}
 	if (mapper==sa1rom)
 	{
@@ -265,16 +269,16 @@ bool openrom(const char * filename, bool confirm)
 		return false;
 	}
 	fseek(thisfile, 0, SEEK_END);
-	header=strstr(filename, ".smc");
+	header=false;
+	if (strlen(filename)>4)
+	{
+		char * fnameend=strchr(filename, '\0')-4;
+		header=(!stricmp(fnameend, ".smc"));
+	}
 	romlen=ftell(thisfile)-(header*512);
 	if (romlen<0) romlen=0;
 	fseek(thisfile, header*512, SEEK_SET);
 	romdata=(unsigned char*)malloc(sizeof(unsigned char)*16*1024*1024);
-	if(romlen > 16*1024*1024){
-		romdata = (unsigned char *)realloc(romdata, sizeof(unsigned char)*16*1024*1024*16);
-		if (romdata == NULL) return (openromerror="Not enough memory") ? 0 : 0;
-		memset((char*)romdata+16*1024*1024, 0x00, 16*1024*1024*15);
-	}
 	int truelen=fread((char*)romdata, 1, romlen, thisfile);
 	if (truelen!=romlen)
 	{
@@ -282,10 +286,8 @@ bool openrom(const char * filename, bool confirm)
 		free(romdata);
 		return false;
 	}
-	if(romlen <= 16*1024*1024){
-		memset((char*)romdata+romlen, 0x00, 16*1024*1024-romlen);
-	}
-	if (confirm && snestopc(0x00FFC0)+21<romlen && strncmp((char*)romdata+snestopc(0x00FFC0), "SUPER MARIOWORLD     ", 21))
+	memset((char*)romdata+romlen, 0x00, 16*1024*1024-romlen);
+	if (confirm && snestopc(0x00FFC0)+21<(int)romlen && strncmp((char*)romdata+snestopc(0x00FFC0), "SUPER MARIOWORLD     ", 21))
 	{
 		closerom(false);
 		openromerror=header?"Doesn't look like an SMW ROM (maybe its extension is wrong?)":"Doesn't look like an SMW ROM (maybe it's headered?)";
@@ -309,7 +311,7 @@ void closerom(bool save)
 	return;
 }
 
-static int getchecksum()
+static unsigned int getchecksum()
 {
 /*
 //from snes9x:
@@ -362,7 +364,7 @@ static int getchecksum()
     Memory.CalculatedChecksum=sum1;
 	}
 */
-	int checksum=0;
+	unsigned int checksum=0;
 	for (int i=0;i<romlen;i++) checksum+=romdata[i];//this one is correct for most cases, and I don't care about the rest.
 	return checksum&0xFFFF;
 }
