@@ -12,6 +12,8 @@
 bool math_pri=true;
 bool math_round=false;
 
+extern bool emulatexkas;
+
 //int bp(const char * str)
 //{
 //	throw str;
@@ -89,7 +91,7 @@ static long double read1(long double in)
 {
 	int addr=snestopc_pick(in);
 	if (addr<0) error("read1(): Address doesn't map to ROM.");
-	else if (addr+0>romlen_r) error("Address out of bounds.");
+	else if (addr+1>romlen_r) error("Address out of bounds.");
 	else return
 			 romdata_r[addr  ]     ;
 	return 0;
@@ -99,7 +101,7 @@ static long double read2(long double in)
 {
 	int addr=snestopc_pick(in);
 	if (addr<0) error("read2(): Address doesn't map to ROM.");
-	else if (addr+1>romlen_r) error("Address out of bounds.");
+	else if (addr+2>romlen_r) error("Address out of bounds.");
 	else return
 			 romdata_r[addr  ]    |
 			(romdata_r[addr+1]<< 8);
@@ -110,7 +112,7 @@ static long double read3(long double in)
 {
 	int addr=snestopc_pick(in);
 	if (addr<0) error("read3(): Address doesn't map to ROM.");
-	else if (addr+2>romlen_r) error("Address out of bounds.");
+	else if (addr+3>romlen_r) error("Address out of bounds.");
 	else return
 			 romdata_r[addr  ]     |
 			(romdata_r[addr+1]<< 8)|
@@ -122,7 +124,7 @@ static long double read4(long double in)
 {
 	int addr=snestopc_pick(in);
 	if (addr<0) error("read4(): Address doesn't map to ROM.");
-	else if (addr+3>romlen_r) error("Address out of bounds.");
+	else if (addr+4>romlen_r) error("Address out of bounds.");
 	else return
 			 romdata_r[addr  ]     |
 			(romdata_r[addr+1]<< 8)|
@@ -192,13 +194,13 @@ static long double getnumcore()
 	if (*str=='$')
 	{
 		if (!isxdigit(str[1])) error("Invalid hex value.");
-		while (str[1]=='0') str++;//to block $0xEA
-		return strtol(str+1, (char**)&str, 16);
+		if (tolower(str[2])=='x') return -42;//let str get an invalid value so it'll throw an invalid operator later on
+		return strtoul(str+1, (char**)&str, 16);
 	}
 	if (*str=='%')
 	{
 		if (str[1]!='0' && str[1]!='1') error("Invalid binary value.");
-		return strtol(str+1, (char**)&str, 2);
+		return strtoul(str+1, (char**)&str, 2);
 	}
 	if (*str=='\'')
 	{
@@ -209,8 +211,7 @@ static long double getnumcore()
 	}
 	if (isdigit(*str))
 	{
-		if (math_round) return strtol(str, (char**)&str, 10);
-		else return strtod(str, (char**)&str);
+		return strtod(str, (char**)&str);
 	}
 	if (isalpha(*str) || *str=='_' || *str=='.' || *str=='?')
 	{
@@ -364,7 +365,7 @@ static long double getnum()
 	prefix("-", -val);
 	prefix("~", ~(int)val);
 	prefix("+", val);
-	//prefix("#", val);
+	if (emulatexkas) prefix("#", val);
 #undef prefix
 	return sanitize(getnumcore());
 }
@@ -386,7 +387,7 @@ static long double eval(int depth)
 		foundlabel=true;
 		if (top=='+') forwardlabel=true;
 		if (top=='+') return labelval(S":pos_"+dec(i)+"_"+dec(poslabels[i]))&0xFFFFFF;
-		else             return labelval(S":neg_"+dec(i)+"_"+dec(neglabels[i]))&0xFFFFFF;
+		else          return labelval(S":neg_"+dec(i)+"_"+dec(neglabels[i]))&0xFFFFFF;
 	}
 notposneglabel:
 	recurseblock rec;
@@ -423,11 +424,11 @@ notposneglabel:
 		oper("%", 3, right?fmod(left, right):error("Modulos by zero."));
 		oper("+", 2, left+right);
 		oper("-", 2, left-right);
-		oper("<<", 1, (int)left<<(int)right);
-		oper(">>", 1, (int)left>>(int)right);
-		oper("&", 0, (int)left&(int)right);
-		oper("|", 0, (int)left|(int)right);
-		oper("^", 0, (int)left^(int)right);
+		oper("<<", 1, (unsigned int)left<<(unsigned int)right);
+		oper(">>", 1, (unsigned int)left>>(unsigned int)right);
+		oper("&", 0, (unsigned int)left&(unsigned int)right);
+		oper("|", 0, (unsigned int)left|(unsigned int)right);
+		oper("^", 0, (unsigned int)left^(unsigned int)right);
 		error("Unknown operator.");
 #undef oper
 	}

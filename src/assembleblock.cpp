@@ -14,25 +14,28 @@ int realsnespos;
 int startpos;
 int realstartpos;
 
+bool emulatexkas;
+
 extern int optimizeforbank;
 
 template<typename t> void error(int neededpass, const char * e_);
 void warn(const char * e);
 
+static bool movinglabelspossible=false;
+
 #define error(p, e) error<errblock>(p, e)
 
 int bytes;
 
-bool suppresswarnings;
+static enum {
+	ratsmeta_ban,
+	ratsmeta_allow,
+	ratsmeta_used,
+} ratsmetastate=ratsmeta_ban;
 
 int snestopc_pick(int addr)
 {
-	if (arch==arch_65816) return snestopc(addr);
-	if (arch==arch_spc700_inline) return addr;
-	if (arch==arch_spc700_raw) return addr;
-	if (arch==arch_null) return addr;
-	if (arch==arch_superfx) return snestopc(addr);
-	return addr;
+	return snestopc(addr);
 }
 
 inline void verifysnespos()
@@ -49,7 +52,6 @@ inline void verifysnespos()
 
 inline void step(int num)
 {
-	verifysnespos();
 	snespos+=num;
 	realsnespos+=num;
 	bytes+=num;
@@ -57,48 +59,50 @@ inline void step(int num)
 
 inline void write1_65816(unsigned int num)
 {
+	verifysnespos();
 	if (pass==2)
 	{
 		int pcpos=snestopc(realsnespos&0xFFFFFF);
-		if (pcpos<0) error(2, S"SNES address $"+hex6(realsnespos)+" doesn't map to ROM");
+		if (pcpos<0)
+		{
+			movinglabelspossible=true;
+			error(2, S"SNES address $"+hex6(realsnespos)+" doesn't map to ROM");
+		}
 		romdata[pcpos]=num;
 		if (pcpos>=romlen) romlen=pcpos+1;
 	}
 	step(1);
+	ratsmetastate=ratsmeta_ban;
 }
 
-inline void write1_generic16(unsigned int num)
-{
-	if (pass==2)
-	{
-		if (realsnespos&0xFFFF0000) error(2, "Address out of bounds");
-		int pcpos=realsnespos&0xFFFF;
-		romdata[pcpos]=num;
-		if (pcpos>=romlen) romlen=pcpos+1;
-	}
-	step(1);
-}
+//inline void write1_generic16(unsigned int num)
+//{
+//	if (pass==2)
+//	{
+//		if (realsnespos&0xFFFF0000) error(2, "Address out of bounds");
+//		int pcpos=realsnespos&0xFFFF;
+//		romdata[pcpos]=num;
+//		if (pcpos>=romlen) romlen=pcpos+1;
+//	}
+//	step(1);
+//}
 
-inline void write1_generic24(unsigned int num)
-{
-	if (pass==2)
-	{
-		if (realsnespos&0xFF000000) error(2, "Address out of bounds");
-		int pcpos=realsnespos&0xFFFFFF;
-		romdata[pcpos]=num;
-		if (pcpos>=romlen) romlen=pcpos+1;
-	}
-	step(1);
-}
+//inline void write1_generic24(unsigned int num)
+//{
+//	if (pass==2)
+//	{
+//		if (realsnespos&0xFF000000) error(2, "Address out of bounds");
+//		int pcpos=realsnespos&0xFFFFFF;
+//		romdata[pcpos]=num;
+//		if (pcpos>=romlen) romlen=pcpos+1;
+//	}
+//	step(1);
+//}
 
 void write1_pick(unsigned int num)
 {
-	verifysnespos();
-	if (arch==arch_65816) write1_65816(num);
-	if (arch==arch_spc700_inline) write1_65816(num);
-	if (arch==arch_spc700_raw) write1_generic16(num);
-	if (arch==arch_superfx) write1_65816(num);
-	if (arch==arch_null) return;
+	//verifysnespos();
+	write1_65816(num);
 }
 
 void asinit_65816();
@@ -114,10 +118,9 @@ void asend_superfx();
 bool asblock_pick(char** word, int numwords)
 {
 	if (arch==arch_65816) return asblock_65816(word, numwords);
+	if (arch==arch_spc700) return asblock_spc700(word, numwords);
 	if (arch==arch_spc700_inline) return asblock_spc700(word, numwords);
-	if (arch==arch_spc700_raw) return asblock_spc700(word, numwords);
 	if (arch==arch_superfx) return asblock_superfx(word, numwords);
-	if (arch==arch_null) return false;
 	return true;
 }
 
@@ -252,7 +255,7 @@ autoarray<int> neglabels;
 autoarray<string> sublabels;
 string ns;
 
-bool fastrom=false;
+//bool fastrom=false;
 
 void startmacro(const char * line);
 void tomacro(const char * line);
@@ -262,6 +265,7 @@ void callmacro(const char * data);
 extern int reallycalledmacros;
 extern int calledmacros;
 extern int macrorecursion;
+extern int incsrcdepth;
 
 extern int repeatnext;
 
@@ -298,13 +302,16 @@ string labelname(const char ** rawname, bool define=false)
 	else
 	{
 		for (i=0;(*rawname=='.');i++) rawname++;
+		if (!isualnum(*rawname)) error(0, "Invalid label name.");
+		if (emulatexkas && i>1) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		if (i)
 		{
 			if (!sublabels[i-1]) error(0, "Sublevel nesting is jumping around too much");
 			name+=S sublabels[i-1]+"_";
 		}
 	}
-	while (isalnum(*rawname) || *rawname=='_')
+	if (!isualnum(*rawname)) error(0, "Invalid label name.");
+	while (isualnum(*rawname))
 	{
 		name+=*(rawname++);
 	}
@@ -330,41 +337,29 @@ inline bool labelvalcore(const char ** rawname, unsigned int * rval, bool define
 	else if (labels.find(name, rval_)) {}
 	else
 	{
-//puts(S dec(pass)+":unfound "+name);
 		if (shouldthrow && pass) error(1, S"Label "+name+" not found");
 		if (rval) *rval=-1;
 		return false;
 	}
-//puts(S dec(pass)+":found "+name+"->"+hex6(rval_));
 	if (rval)
 	{
-		if (fastrom && (rval_&0x700000)!=0x700000) *rval=rval_|0x800000;
-		else *rval=rval_;
+		*rval=rval_;
+		//if (fastrom && (rval_&0x700000)!=0x700000) *rval|=0x800000;
 	}
 	return true;
 }
 
 unsigned int labelval(const char ** rawname, bool define)
 {
-//char*p=(char*)*rawname;
 	unsigned int rval;
 	labelvalcore(rawname, &rval, define, true);
-//char x=**rawname;
-//*(char*)*rawname=0;
-//puts(S"R:"+(S p)+"->"+hex6(rval));
-//*(char*)*rawname=x;
 	return rval;
 }
 
 unsigned int labelval(char ** rawname, bool define)
 {
-//char*p=(char*)*rawname;
 	unsigned int rval;
 	labelvalcore((const char**)rawname, &rval, define, true);
-//char x=**rawname;
-//*(char*)*rawname=0;
-//puts(S"R:"+(S p)+"->"+hex6(rval));
-//*(char*)*rawname=x;
 	return rval;
 }
 
@@ -373,7 +368,6 @@ unsigned int labelval(string name, bool define)
 	const char * rawname=name;
 	unsigned int rval;
 	labelvalcore(&rawname, &rval, define, true);
-//puts(S dec(pass)+"R:"+name+"->"+hex6(rval));
 	return rval;
 }
 
@@ -393,7 +387,6 @@ bool labelval(string name, unsigned int * rval, bool define)
 	return labelvalcore(&str, rval, define, false);
 }
 
-static bool redefinedlabels=false;
 void setlabel(string name, int loc=-1)
 {
 	if (loc==-1)
@@ -406,7 +399,7 @@ void setlabel(string name, int loc=-1)
 	{
 		if (labels.find(name, labelpos))
 		{
-			redefinedlabels=true;
+			movinglabelspossible=true;
 			error(0, S"Label \""+name+"\" redefined");
 		}
 		labels.insert(name, loc);
@@ -418,8 +411,8 @@ void setlabel(string name, int loc=-1)
 	else if (pass==2)
 	{
 		//all label locations are known at this point, add a sanity check
-		if (!labels.find(name, labelpos)) error(2, "Internal error: A label was created on the third patch. Send this patch to Alcaro so he can debug it.");
-		if ((int)labelpos!=loc && !redefinedlabels) error(2, "Internal error: A label is moving around. Send this patch to Alcaro so he can debug it.");
+		if (!labels.find(name, labelpos)) error(2, "Internal error: A label was created on the third pass. Send this patch to Alcaro so he can debug it.");
+		if ((int)labelpos!=loc && !movinglabelspossible) error(2, "Internal error: A label is moving around. Send this patch to Alcaro so he can debug it.");
 	}
 }
 
@@ -467,26 +460,34 @@ unsigned char padbyte[12];
 
 bool sandbox=false;
 
-void freespaceend()
+int getfreespaceid()
 {
 	if (freespaceidnext>125) fatalerror("A patch may not contain more than 125 freespaces.");
+	return freespaceidnext++;
+}
+
+void checkbankcross()
+{
 	if (snespos<0 && realsnespos<0 && startpos<0 && realstartpos<0) return;
 //puts(S hex(snespos)+"^"+hex(startpos)+"&0xFFFF0000 ("+hex((snespos^startpos)&0xFFFF0000)+")");
 //puts(S hex(realsnespos)+"^"+hex(realstartpos)+"&0xFFFF0000 ("+hex((realsnespos^realstartpos)&0xFFFF0000)+")");
 	if ((((    snespos^    startpos)&0x7FFF0000) && (((    snespos-1)^    startpos)&0x7FFF0000)) ||
 			(((realsnespos^realstartpos)&0x7FFF0000) && (((realsnespos-1)^realstartpos)&0x7FFF0000)))
 				fatalerror("A bank border was crossed somewhere prior to this point.");
-	if (snespos&0x7F000000)
+}
+
+void freespaceend()
+{
+	checkbankcross();
+	if ((snespos&0x7F000000) && (snespos&0x80000000)==0)
 	{
 		freespacelen[freespaceid]=snespos-freespacestart+freespaceextra;
-		freespaceid=++freespaceidnext;
+		snespos=0xFFFFFFFF;
 	}
 	freespaceextra=0;
 }
 
 int savedoptions[16];
-
-//extern bool emulate;
 
 int numopcodes;
 
@@ -494,6 +495,9 @@ extern bool math_pri;
 extern bool math_round;
 
 bool warnxkas;
+
+#include "scapegoat.hpp"
+extern lightweight_map<string, string> defines;
 
 void initstuff()
 {
@@ -513,6 +517,7 @@ void initstuff()
 	calledmacros=0;
 	macrorecursion=0;
 	repeatnext=1;
+	defines.clear();
 	ns="";
 	sublabels.reset();
 	poslabels.reset();
@@ -527,7 +532,7 @@ void initstuff()
 	realsnespos=0xFFFFFFFF;
 	startpos=0xFFFFFFFF;
 	realstartpos=0xFFFFFFFF;
-	fastrom=false;
+	//fastrom=false;
 	freespaceidnext=1;
 	freespaceid=1;
 	freespaceextra=0;
@@ -537,11 +542,12 @@ void initstuff()
 	math_round=true;
 	
 	if (arch==arch_65816) asinit_65816();
+	if (arch==arch_spc700) asinit_spc700();
 	if (arch==arch_spc700_inline) asinit_spc700();
-	if (arch==arch_spc700_raw) asinit_spc700();
 	if (arch==arch_superfx) asinit_superfx();
 	
 	warnxkas=false;
+	emulatexkas=false;
 }
 
 
@@ -554,8 +560,8 @@ void finishpass()
 	if (pushpcnum && pass==0) nullerror("pushpc without matching pullpc");
 	freespaceend();
 	if (arch==arch_65816) asend_65816();
+	if (arch==arch_spc700) asend_spc700();
 	if (arch==arch_spc700_inline) asend_spc700();
-	if (arch==arch_spc700_raw) asend_spc700();
 	if (arch==arch_superfx) asend_superfx();
 }
 
@@ -572,6 +578,7 @@ bool addlabel(const char * label, int pos=-1)
 	}
 	if (label[strlen(label)-1]==':' || label[0]=='.' || label[0]=='?')
 	{
+		if (!label[1]) return false;
 		bool requirecolon=(label[0]!='.');
 		string name=labelname(&label, label[0]!='?');
 		if (label[0]==':') label++;
@@ -630,11 +637,6 @@ void assembleblock(const char * block)
 		}
 		return;
 	}
-	if (word[0][0]=='@')
-	{
-		word[0]++;
-		suppresswarnings=true;
-	}
 #define is(test) (!stricmp(word[0], test))
 #define is0(test) (!stricmp(word[0], test) && numwords==1)
 #define is1(test) (!stricmp(word[0], test) && numwords==2)
@@ -645,6 +647,7 @@ void assembleblock(const char * block)
 #define par word[1]
 	if (is("if") || is("elseif") || is("assert"))
 	{
+		if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		const char * errmsg=NULL;
 		if (is("assert"))
 		{
@@ -823,11 +826,11 @@ void assembleblock(const char * block)
 	{
 		if (pass==2) warn(dequote(par));
 	}
-	else if (is0("asar") || is1("asar"))
+	else if (is0("@asar") || is1("@asar"))
 	{
 		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
-		if (!suppresswarnings) error(0, "This command must be preceded by an @.");
 		if (!par) return;
+		if (emulatexkas) error(0, "This file is incompatible with xkas emulation mode.");
 		int dots=0;
 		int dig=0;
 		for (int i=0;par[i];i++)
@@ -844,8 +847,8 @@ void assembleblock(const char * block)
 		if (!dig || !dots || dots>2) error(0, "Invalid version number");
 		autoptr<char**> vers=split(par, ".");
 		int vermaj=atoi(vers[0]);
-		if (vermaj<asarver_maj) error(0, "This version of Asar is too old for this patch.");
-		if (vermaj>asarver_maj) return;
+		if (vermaj>asarver_maj) fatalerror("This version of Asar is too old for this patch.");
+		if (vermaj<asarver_maj) return;
 		if (dots==1)
 		{
 			if (strlen(vers[1])!=2) error(0, "Invalid version number.");
@@ -863,10 +866,17 @@ void assembleblock(const char * block)
 			if (vermin==asarver_min && verbug>asarver_bug) fatalerror("This version of Asar is too old for this patch.");
 		}
 	}
-	else if (is0("include") || is1("includefrom"))
+	else if (is0("@xkas"))
 	{
 		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
-		if (!suppresswarnings) error(0, "This command must be preceded by an @.");
+		if (incsrcdepth!=1 && !emulatexkas) error(0, "This command may only be used in the root file.");
+		emulatexkas=true;
+		optimizeforbank=0x100;
+		checksum=false;
+	}
+	else if (is0("@include") || is1("@includefrom"))
+	{
+		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
 		if (istoplevel)
 		{
 			if (par) fatalerror(S"This file may not be used as the main file. The main file is \""+S par+"\".");
@@ -886,6 +896,8 @@ void assembleblock(const char * block)
 		{
 			if (pars[i][0]=='"')
 			{
+				if (!strcmp(pars[i],"\"STAR\"") && !emulatexkas)
+						warn0("If you want to assemble an xkas patch, add ;@xkas at the top or you may run into a couple of problems.");
 				for (unsigned char * str=(unsigned char*)dequote(pars[i]);*str;str++)
 				{
 					if (len==1) write1(table[*str]);
@@ -924,12 +936,12 @@ void assembleblock(const char * block)
 		int num=getnum(par);
 		if (forwardlabel) error(0, "org Label is only valid for labels earlier in the patch");
 		if (num&~0xFFFFFF) error(1, "Address out of bounds");
-		if (fastrom) num|=0x800000;
+		if (mapper==lorom && (num&0x408000)==0x400000) warn0("It would be wise to set the 008000 bit of this address.");
+		//if (fastrom) num|=0x800000;
 		snespos=num;
 		realsnespos=num;
 		startpos=num;
 		realstartpos=num;
-		optimizeforbank=-1;
 	}
 	else if (is1("base"))
 	{
@@ -948,9 +960,14 @@ void assembleblock(const char * block)
 	}
 	else if (is1("bank"))
 	{
-		if (!stricmp(par, "off"))
+		if (!stricmp(par, "auto"))
 		{
 			optimizeforbank=-1;
+			return;
+		}
+		if (!stricmp(par, "noassume"))
+		{
+			optimizeforbank=0x100;
 			return;
 		}
 		int num=getnum(par);
@@ -961,6 +978,7 @@ void assembleblock(const char * block)
 	}
 	else if (is("freespace") || is("freecode") || is("freedata"))
 	{
+		if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		string parstr;
 		if (numwords==1) parstr="\n";//crappy hack: impossible character to cut out extra commas
 		else if (numwords==2) parstr=word[1];
@@ -970,6 +988,8 @@ void assembleblock(const char * block)
 		autoptr<char**> pars=split(parstr.str, ",");
 		int useram=-1;
 		bool fixedpos=false;
+		bool align=false;
+		bool leakwarn=true;
 		for (int i=0;pars[i];i++)
 		{
 			if (pars[i][0]=='\n') {}
@@ -988,12 +1008,23 @@ void assembleblock(const char * block)
 				if (fixedpos) error(0, "Invalid freespace request.");
 				fixedpos=true;
 			}
+			else if (!stricmp(pars[i], "align"))
+			{
+				if (align) error(0, "Invalid freespace request.");
+				align=true;
+			}
+			else if (!stricmp(pars[i], "cleaned"))
+			{
+				if (!leakwarn) error(0, "Invalid freespace request.");
+				leakwarn=false;
+			}
 			else error(0, "Invalid freespace request.");
 		}
 		if (useram==-1) error(0, "Invalid freespace request.");
 		if (mapper==hirom && useram) error(0, "No banks contain the RAM mirrors in hirom.");
 		if (mapper==norom) error(0, "Can't find freespace in norom.");
 		freespaceend();
+		freespaceid=getfreespaceid();
 		if (pass==0) snespos=(freespaceid<<24)|0x8000;
 		if (pass==1)
 		{
@@ -1005,33 +1036,36 @@ void assembleblock(const char * block)
 				/*if (freespaceorgpos[freespaceid]==-2)   error(1, "A static freespace must be targeted by at least one autoclean.");*/
 			}
 			if (fixedpos && freespaceorgpos[freespaceid]) freespacepos[freespaceid]=snespos=(freespaceid<<24)|freespaceorgpos[freespaceid];
-			else freespacepos[freespaceid]=snespos=(freespaceid<<24)|getsnesfreespace(freespacelen[freespaceid], useram);
-			freespaceuse+=freespacelen[freespaceid];
+			else freespacepos[freespaceid]=snespos=(freespaceid<<24)|getsnesfreespace(freespacelen[freespaceid], useram, true, true, align);
 		}
 		if (pass==2)
 		{
 			if (fixedpos && freespaceorgpos[freespaceid]==-1) return;//to kill some errors
 			snespos=(freespaceid<<24)|freespacepos[freespaceid];
 			resizerats(snespos, freespacelen[freespaceid]);
-			if (freespaceleak[freespaceid]) warn2("This freespace appears to be leaked.");
+			if (freespaceleak[freespaceid] && leakwarn) warn2("This freespace appears to be leaked.");
 			if (fixedpos && freespaceorgpos[freespaceid]>0 && freespacelen[freespaceid]>freespaceorglen[freespaceid])
 					error(2, "A static freespace may not grow.");
+			freespaceuse+=8+freespacelen[freespaceid];
 		}
 		freespacestatic[freespaceid]=fixedpos;
-		if (snespos<0 && mapper==sa1rom) fatalerror("No freespace found in the mapped banks.");
-		if (snespos<0) fatalerror("No freespace found.");
+		if (snespos<0 && mapper==sa1rom) fatalerror(S"No freespace found in the mapped banks (requested size: "+dec(freespacelen[freespaceid])+")");
+		if (snespos<0) fatalerror(S"No freespace found (requested size: "+dec(freespacelen[freespaceid])+")");
 		bytes+=8;
-		if (fastrom) snespos|=0x800000;
+		//if (fastrom) snespos|=0x800000;
 		freespacestart=snespos;
 		startpos=snespos;
 		realstartpos=snespos;
 		realsnespos=snespos;
 		optimizeforbank=-1;
+		ratsmetastate=ratsmeta_allow;
 	}
 	else if (is1("prot"))
 	{
 		if (!confirmqpar(par)) error(0, "Mismatched parentheses");
-		int here=(((realsnespos&0xFFFFFF)&~0x8000)-8)|0x8000;
+		if (!ratsmetastate) error(2, "PROT must be used at the start of a freespace block.");
+		//int here=(((realsnespos&0xFFFFFF)&~0x8000)-8)|0x8000;
+		if (ratsmetastate==ratsmeta_used) step(-5);
 		int num;
 		autoptr<char**> pars=qpsplit(par, ",", &num);
 		write1('P');
@@ -1054,10 +1088,7 @@ void assembleblock(const char * block)
 		write1('O');
 		write1('P');
 		write1(0);
-		if (pass==2)
-		{
-			if (snestopc(ratsstart(here))!=snestopc(here)) error(2, "PROT must be used directly after FREECODE or FREEDATA.");
-		}
+		ratsmetastate=ratsmeta_used;
 	}
 	else if (is1("autoclean") || is2("autoclean") || is1("autoclear") || is2("autoclear"))
 	{
@@ -1118,6 +1149,7 @@ void assembleblock(const char * block)
 	}
 	else if (is0("pushpc"))
 	{
+		if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		pushpc[pushpcnum].arch=arch;
 		pushpc[pushpcnum].snespos=snespos;
 		pushpc[pushpcnum].snesstart=startpos;
@@ -1127,7 +1159,6 @@ void assembleblock(const char * block)
 		pushpc[pushpcnum].freeex=freespaceextra;
 		pushpc[pushpcnum].freest=freespacestart;
 		pushpcnum++;
-		if (snespos&0x7F000000) freespaceid++;
 		snespos=0xFFFFFFFF;
 		startpos=0xFFFFFFFF;
 		realsnespos=0xFFFFFFFF;
@@ -1168,37 +1199,58 @@ void assembleblock(const char * block)
 		if (maxpos&0xFF000000) error(0, "Broken warnpc argument");
 		if (snespos>maxpos) error(0, S"warnpc failed: Current position ("+hex6(snespos)+") is after end position ("+hex6(maxpos)+")");
 		if (warnxkas && snespos==maxpos) warn0(S"xkas conversion warning: warnpc is relaxed one byte in Asar");
-		//if (emulate && snespos==maxpos) error(0, S"warnpc failed: Current position ("+hex6(snespos)+") is equal to end position ("+hex6(maxpos)+")");
+		if (emulatexkas && snespos==maxpos) error(0, S"warnpc failed: Current position ("+hex6(snespos)+") is equal to end position ("+hex6(maxpos)+")");
 	}
 	else if (is1("rep"))
 	{
 		int rep=getnum(par);
 		if (foundlabel) error(0, "rep Label is not valid");
-		if (rep<=1) 
+		if (rep<=1)
 		{
-			//if (emulate)
-			//{
-			//	if (rep==0) rep=1;
-			//	if (rep<0) rep=0;
-			//	repeatnext=rep;
-			//	return;
-			//}
+			if (emulatexkas)
+			{
+				if (rep==0) rep=1;
+				if (rep<0) rep=0;
+				repeatnext=rep;
+				return;
+			}
 			warn0("xkas-style conditional compilation detected. Please use the if command instead.");
 		}
 		repeatnext=rep;
 	}
+#ifdef SANDBOX
+	else if (is("incsrc") || is("incbin") || is("table"))
+	{
+		error(0, "This command is disabled.");
+	}
+#endif
 	else if (is1("incsrc"))
 	{
+		checkbankcross();
 		string name;
 		if (warnxkas && (strchr(thisfilename, '/') || strchr(thisfilename, '\\')))
 			warn0("xkas compatibility warning: incsrc and incbin look for files relative to the patch in Asar, "
 					"but xkas looks relative to the assembler.");
-		/*if (emulate) name=dequote(par);
-		else*/ name=S dir(thisfilename)+dequote(par);
+		if (strchr(par, '\\'))
+		{
+			if (emulatexkas)
+			{
+				for (int i=0;par[i];i++)
+				{
+					if (par[i]=='\\') par[i]='/';//let's just hope nobody finds I could just enable this for everything.
+				}
+			}
+#ifdef _WIN32
+			else warn0("This patch may not assemble cleanly on all platforms. Please use / instead.");
+#endif
+		}
+		if (emulatexkas) name=dequote(par);
+		else name=S dir(thisfilename)+dequote(par);
 		assemblefile(name, false);
 	}
-	else if (is1("incbin"))
+	else if (is1("incbin") || is3("incbin"))
 	{
+		if (numwords==4 && strcmp(word[2], "->")) error(0, "Broken incbin command");
 		int len;
 		int start=0;
 		int end=0;
@@ -1218,14 +1270,68 @@ void assembleblock(const char * block)
 		if (warnxkas && (strchr(thisfilename, '/') || strchr(thisfilename, '\\')))
 			warn0("xkas compatibility warning: incsrc and incbin look for files relative to the patch in native mode, "
 					"but relative to the assembler in emulation mode");
-		/*if (emulate) name=dequote(par);
-		else*/ name=S dir(thisfilename)+dequote(par);
+		if (strchr(par, '\\'))
+		{
+			if (emulatexkas)
+			{
+				for (int i=0;par[i];i++)
+				{
+					if (par[i]=='\\') par[i]='/';//let's just hope nobody finds I could just enable this for everything.
+				}
+			}
+#ifdef _WIN32
+			else warn0("This patch may not assemble cleanly on all platforms. Please use / instead.");
+#endif
+		}
+		if (emulatexkas) name=dequote(par);
+		else name=S dir(thisfilename)+dequote(par);
 		char * data;//I couldn't find a way to get this into an autoptr
 		if (!readfile(name, &data, &len)) error(0, "File not found");
 		autoptr<char*> datacopy=data;
 		if (!end) end=len;
 		if (end<start) error(0, "Negative range in incbin");
-		for (int i=start;i<end;i++) write1(data[i]);
+		if (end>len) error(0, "The file is not that long.");
+		if (numwords==4)
+		{
+			if (!confirmname(word[3]))
+			{
+				int pos=getnum(word[3]);
+				if (foundlabel) error(0, "Can't use labels here.");
+				int offset=snestopc(pos);
+				if (offset+end-start>0xFFFFFF) error(0, "Can't create ROMs larger than 16MB");
+				if (offset+end-start>romlen) romlen=offset+end-start;
+				if (pass==2) memcpy(romdata+offset, data+start, end-start);
+			}
+			else
+			{
+				int pos;
+				if (pass==0)
+				{
+					if (end-start>65536) error(0, "Can't include more than 64 kilobytes at once");
+					pos=getpcfreespace(end-start, false, true, false);
+					if (pos<0) error(0, "No freespace found");
+					int freespaceid=getfreespaceid();
+					freespacepos[freespaceid]=pctosnes(pos)|(/*fastrom?0x800000:*/0x000000)|(freespaceid<<24);
+					setlabel(word[3], freespacepos[freespaceid]);
+					memset(romdata+pos, 0xFF, end-start);
+				}
+				if (pass==1)
+				{
+					getfreespaceid();//nothing to do here, but we want to tick the counter
+				}
+				if (pass==2)
+				{
+					int freespaceid=getfreespaceid();
+					if (freespaceleak[freespaceid]) warn2("This freespace appears to be leaked.");
+					memcpy(romdata+snestopc(freespacepos[freespaceid]&0xFFFFFF), data+start, end-start);
+					freespaceuse+=8+end-start;
+				}
+			}
+		}
+		else
+		{
+			for (int i=start;i<end;i++) write1(data[i]);
+		}
 	}
 	else if (is1("skip"))//nobody ever uses this, but whatever
 	{
@@ -1233,15 +1339,6 @@ void assembleblock(const char * block)
 		if (foundlabel) error(0, "skip Label is not valid");
 		step(skip);
 	}
-//can't figure out how to make this not interfere with the standard freespace finder (also the syntax sucks)
-//NOTE TO SELF: Set the freespace in pass 0, not pass 1. However, the syntax still sucks.
-//- bigincbin: Includes a file, even if it's larger than 32 kilobytes (the largest freespace+incbin can do without
-//  complaining; dynamic sprite GFX are sometimes huge). Syntax: bigincbin Label: file.bin. The incbin
-//  syntax works fine for including parts of a file. It's guaranteed to be at the start of a bank, and
-//  the current code position will not be changed. The only way to access it will be through the
-//  defined label. It is allowed to use a sublabel or +- label. WARNING: If the file is larger than 64 kilobytes,
-//  only the first 64KB will be protected by RATS,
-//  and autoclean will only delete parts of it.
 	else if (is0("cleartable"))
 	{
 		cleartable();
@@ -1256,8 +1353,7 @@ void assembleblock(const char * block)
 		autoptr<char*> tablecontents=readfile(name);
 		if (!tablecontents) error(0, "File not found");
 		autoptr<char**> tablelines=split(tablecontents, "\n");
-		for (int i=0;i<256;i++) table[i]=((numopcodes+romdata[snestopc(0x00FFDE)]+(romdata[snestopc(0x00FFDF)]<<8)+i)*0x26594131)|0x40028020;
-			//reading from the write buffer is OK since we just want garbage values
+		for (int i=0;i<256;i++) table[i]=((numopcodes+read2(0x00FFDE)+i)*0x26594131)|0x40028020;
 			//garbage value so people will notice they're doing it wrong (for bonus points: figure out what 0x26594131 is)
 		for (int i=0;tablelines[i];i++)
 		{
@@ -1327,8 +1423,8 @@ void assembleblock(const char * block)
 			else if (!stricmp(pars[i], "bytes")) out+=dec(bytes);
 			else if (!stricmp(pars[i], "freespaceuse")) out+=dec(freespaceuse);
 			else if (!stricmp(pars[i], "pc")) out+=hex6(snespos&0xFFFFFF);
-			else if (!strnicmp(pars[i], "dec(", strlen("dec("))) out+=dec(getnum(pars[i]+strlen("dec")));
-			else if (!strnicmp(pars[i], "hex(", strlen("hex("))) out+=hex0(getnum(pars[i]+strlen("hex")));
+			else if (!strncasecmp(pars[i], "dec(", strlen("dec("))) out+=dec(getnum(pars[i]+strlen("dec")));
+			else if (!strncasecmp(pars[i], "hex(", strlen("hex("))) out+=hex0(getnum(pars[i]+strlen("hex")));
 			else error(2, "Unknown variable.");
 		}
 		if (pass!=2) return;
@@ -1338,6 +1434,7 @@ void assembleblock(const char * block)
 	{
 		if(0);
 		else if (!stricmp(par, "bytes")) bytes=0;
+		else if (!stricmp(par, "freespaceuse")) freespaceuse=0;
 		else error(2, "Unknown variable.");
 	}
 	else if (is1("padbyte") || is1("padword") || is1("padlong") || is1("paddword"))
@@ -1395,15 +1492,13 @@ void assembleblock(const char * block)
 		int num=getnum(par);
 		for (int i=0;i<num;i++) write1(fillbyte[i%12]);
 	}
-	//else if (is2("set"))
-	//{
-	//	if (!commandlineflag(word[1], dequote(word[2]))) error("Bad set command");
-	//}
 	else if (is1("arch"))
 	{
+		if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		if (!stricmp(par, "65816")) { arch=arch_65816; return; }
+		if (!stricmp(par, "spc700")) { arch=arch_spc700; return; }
 		if (!stricmp(par, "spc700-inline")) { arch=arch_spc700_inline; return; }
-		if (!stricmp(par, "spc700-raw")) { arch=arch_spc700_raw; checksum=false; return; }
+		if (!stricmp(par, "spc700-raw")) { arch=arch_spc700; mapper=norom; checksum=false; return; }
 		if (!stricmp(par, "superfx")) { arch=arch_superfx; return; }
 	}
 	else if (is2("math"))
@@ -1431,8 +1526,10 @@ void assembleblock(const char * block)
 	}
 	else if (is0("fastrom"))
 	{
-		if (mapper==lorom || mapper==hirom) fastrom=true;
-		else error(0, "Can't use fastrom in this mapper.");
+		//removed due to causing more trouble than it's worth.
+		//if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
+		//if (mapper==lorom || mapper==hirom) fastrom=true;
+		//else error(0, "Can't use fastrom in this mapper.");
 	}
 	else if (is0("{") || is0("}")) {}
 	else error(1, "Unknown command.");
@@ -1454,17 +1551,18 @@ bool assemblemapper(char** word, int numwords)
 	else if (is0("sfxrom"))
 	{
 		mapper=sfxrom;
-		fastrom=false;
+		//fastrom=false;
 	}
 	else if (is0("norom"))
 	{
 		//$000000 would be the best snespos for this, but I don't care
 		mapper=norom;
-		fastrom=false;
+		//fastrom=false;
+		checksum=false;//we don't know where the header is, so don't set the checksum
 	}
 	else if (is("sa1rom"))
 	{
-		fastrom=false;
+		//fastrom=false;
 		if (par)
 		{
 			if (word[2]) error(0, "Invalid mapper.");
@@ -1475,10 +1573,6 @@ bool assemblemapper(char** word, int numwords)
 			int len;
 			autoptr<char**> pars=qpsplit(par, ",", &len);
 			if (len!=4) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[0])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[1])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[2])) error(0, "Invalid mapper.");
-			if (!ctype_digit(pars[3])) error(0, "Invalid mapper.");
 			sa1banks[0]=(par[0]-'0')<<20;
 			sa1banks[1]=(par[2]-'0')<<20;
 			sa1banks[4]=(par[4]-'0')<<20;
@@ -1492,10 +1586,11 @@ bool assemblemapper(char** word, int numwords)
 			sa1banks[5]=3<<20;
 		}
 		mapper=sa1rom;
+//#warning may want to check checksums here...
 	}
 	else if (is0("header"))
 	{
-		//detected elsewhere; ignoring for familiarity
+		//headers are detected elsewhere; ignoring for familiarity
 	}
 	else return false;
 	return true;

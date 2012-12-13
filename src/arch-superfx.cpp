@@ -2,6 +2,7 @@
 
 #define error error<errblock>
 #define write1 write1_pick
+extern bool emulatexkas;
 
 void asinit_superfx()
 {
@@ -56,7 +57,9 @@ bool asblock_superfx(char** word, int numwords)
 #define is3(test) (!stricmp(word[0], test) && numwords==4)
 #define is4(test) (!stricmp(word[0], test) && numwords==5)
 #define is5(test) (!stricmp(word[0], test) && numwords==6)
-#define par word[1]
+	char * par=NULL;
+	if (word[1]) par=strdup(word[1]);
+	autoptr<char*> parptr=par;
 	if(0);
 	else if (assemblemapper(word, numwords)) {}
 	else if (numwords==1)

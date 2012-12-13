@@ -13,6 +13,7 @@ void asend_65816()
 
 extern int optimizeforbank;
 extern bool fastrom;
+extern bool emulatexkas;
 
 bool asblock_65816(char** word, int numwords)
 {
@@ -23,7 +24,10 @@ bool asblock_65816(char** word, int numwords)
 #define is3(test) (!stricmp(word[0], test) && numwords==4)
 #define is4(test) (!stricmp(word[0], test) && numwords==5)
 #define is5(test) (!stricmp(word[0], test) && numwords==6)
-#define par word[1]
+//#define par word[1]
+	char * par=NULL;
+	if (word[1]) par=strdup(word[1]);
+	autoptr<char*> parptr=par;
 	int num;
 	int len=0;//declared here for A->generic fallback
 	if(0);
@@ -119,9 +123,9 @@ bool asblock_65816(char** word, int numwords)
 		as2("JMP", 0x7C); as2("JSR", 0xFC);
 		end();
 	}
-	else if (match("(", ")"))
+	else if (match("(", ")") && confirmqpar(substr(word[1]+1, strlen(word[1]+1)-1)))
 	{
-		init("", "");//to not break db ($02<<2)|($40>>1)
+		init("(", ")");
 		the8(0x12, 1);
 		as1("PEI", 0xD4);
 		as2("JMP", 0x6C);
@@ -130,7 +134,7 @@ bool asblock_65816(char** word, int numwords)
 	else if (match("", ",x"))
 	{
 		init("", ",x");
-		if (match("(", ")")) warn0("($yy),x does not exist, assuming $yy,x");
+		if (match("(", ")") && confirmqpar(substr(word[1]+1, strlen(word[1]+1)-2-1))) warn0("($yy),x does not exist, assuming $yy,x");
 		the8(0x1F, 3);
 		the8(0x1D, 2);
 		the8(0x15, 1);
@@ -144,6 +148,7 @@ bool asblock_65816(char** word, int numwords)
 	else if (match("", ",y"))
 	{
 		init("", ",y");
+		if (len==3 && emulatexkas) len=2;
 		as1("LDX", 0xB6);
 		as1("STX", 0x96);
 		as2("LDX", 0xBE);
@@ -172,8 +177,8 @@ bool asblock_65816(char** word, int numwords)
 		if (false)
 		{
 opAFallback:
-			unsigned int tmp;
-			if (pass && !labelval(&par, &tmp)) error(0, "Unknown opcode");
+			unsigned int tmp=0;
+			if (pass && !labelval(par, &tmp)) return false;
 			len=getlen(par);
 			num=tmp;
 		}
@@ -200,12 +205,15 @@ opAFallback:
 		as2("JMP", 0x4C);
 		as2("JSR", 0x20);
 		as32("JML", 0x5C);
-		//as3("JMP", 0x5C);//these two fails
 		as32("JSL", 0x22);
-		//as3("JSR", 0x22);
 		as2("MVN", 0x54);
 		as2("MVP", 0x44);
 		as2("PEA", 0xF4);
+		if (emulatexkas)
+		{
+			as3("JMP", 0x5C);//all my hate
+			//as3("JSR", 0x22);
+		}
 //		if (is("BRA"))
 //		{
 //puts("");

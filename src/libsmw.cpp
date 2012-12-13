@@ -83,15 +83,24 @@ void removerats(int snesaddr)
 	for (int i=(romdata[addr+4]|(romdata[addr+5]<<8))+8;i>=0;i--) romdata[addr+i]=0;
 }
 
-static inline int trypcfreespace(int start, int end, int size, int banksize)
+static inline int trypcfreespace(int start, int end, int size, int banksize, int minalign)
 {
 	while (start+size<=end)
 	{
-		if (((start+8)&~banksize)!=((start+size-1)&~banksize&0xFFFFFF) && (start&banksize&0xFFFFF8)!=(banksize&0xFFFFF8))
+		if (
+				((start+8)&~banksize)!=((start+size-1)&~banksize&0xFFFFFF)//if the contents won't fit in this bank...
+			&&
+				(start&banksize&0xFFFFF8)!=(banksize&0xFFFFF8)//and the RATS tag can't fit in the bank either...
+			)
 		{
-			start&=~banksize&0xFFFFFF;
-			start|=banksize&0xFFFFF8;
+			start&=~banksize&0xFFFFFF;//round it down to the start of the bank,
+			start|=banksize&0xFFFFF8;//then round it up to the end minus the RATS tag...
 			continue;
+		}
+		if (minalign)
+		{
+			start&=~minalign&0xFFFFFF;
+			start|=minalign&0xFFFFF8;
 		}
 		if (!strncmp((char*)romdata+start, "STAR", 4) &&
 				(romdata[start+4]^romdata[start+6])==0xFF && (romdata[start+5]^romdata[start+7])==0xFF)
@@ -129,7 +138,8 @@ static inline int trypcfreespace(int start, int end, int size, int banksize)
 //This function finds a block of freespace. -1 means "no freespace found", anything else is a PC address.
 //isforcode=true tells it to favor banks 40+, false tells it to avoid them entirely.
 //It automatically adds a RATS tag.
-int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankborders)
+
+int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankborders, bool align)
 {
 	if (!size) return 0x1234;//in case someone protects zero bytes for some dumb reason.
 		//You can write zero bytes to anywhere, so I'll just return something that removerats will ignore.
@@ -141,10 +151,12 @@ int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankbo
 	rebootlorom:
 		if (romlen>0x200000 && !isforcode)
 		{
-			int pos=trypcfreespace(0x200000-8, (romlen<0x400000)?romlen:0x400000, size, respectbankborders?0x7FFF:0xFFFFFF);
+			int pos=trypcfreespace(0x200000-8, (romlen<0x400000)?romlen:0x400000, size,
+					respectbankborders?0x7FFF:0xFFFFFF, align?0x7FFF:(respectbankborders || size<32768)?0:0x7FFF);
 			if (pos>=0) return pos;
 		}
-		int pos=trypcfreespace(0x80000, (romlen<0x200000)?romlen:0x200000, size, respectbankborders?0x7FFF:0xFFFFFF);
+		int pos=trypcfreespace(0x80000, (romlen<0x200000)?romlen:0x200000, size,
+				respectbankborders?0x7FFF:0xFFFFFF, align?0x7FFF:(respectbankborders || size<32768)?0:0x7FFF);
 		if (pos>=0) return pos;
 		if (autoexpand)
 		{
@@ -182,12 +194,12 @@ int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankbo
 	if (mapper==hirom)
 	{
 		if (isforcode) return -1;
-		return trypcfreespace(0, romlen, size, 0xFFFF);
+		return trypcfreespace(0, romlen, size, 0xFFFF, align?0xFFFF:0);
 	}
 	if (mapper==sfxrom)
 	{
 		if (isforcode) return -1;
-		return trypcfreespace(0, romlen, size, 0x7FFF);
+		return trypcfreespace(0, romlen, size, 0x7FFF, align?0x7FFF:0);
 	}
 	if (mapper==sa1rom)
 	{
@@ -201,12 +213,14 @@ int getpcfreespace(int size, bool isforcode, bool autoexpand, bool respectbankbo
 				if (sa1banks[i]<=romlen && sa1banks[i]+0x100000>romlen) nextbank=sa1banks[i];
 				continue;
 			}
-			int pos=trypcfreespace(sa1banks[i]?sa1banks[i]:0x80000, sa1banks[i]+0x100000, size, 0x7FFF);
+			int pos=trypcfreespace(sa1banks[i]?sa1banks[i]:0x80000, sa1banks[i]+0x100000, size, 0x7FFF, align?0x7FFF:0);
 			if (pos>=0) return pos;
 		}
 		if (autoexpand && nextbank>=0)
 		{
+			unsigned char x7FD7[]={0, 0x0A, 0x0B, 0x0C, 0x0C, 0x0D, 0x0D, 0x0D, 0x0D};
 			romlen=nextbank+0x100000;
+			romdata[0x7FD7]=x7FD7[romlen>>20];
 			autoexpand=false;
 			goto rebootsa1rom;
 		}
@@ -254,9 +268,9 @@ void WalkMetadata(int loc, void(*func)(int loc, char * name, int len, unsigned c
 	}
 }
 
-int getsnesfreespace(int size, bool isforcode, bool autoexpand, bool respectbankborders)
+int getsnesfreespace(int size, bool isforcode, bool autoexpand, bool respectbankborders, bool align)
 {
-	return pctosnes(getpcfreespace(size, isforcode, autoexpand, respectbankborders));
+	return pctosnes(getpcfreespace(size, isforcode, autoexpand, respectbankborders, align));
 }
 
 bool openrom(const char * filename, bool confirm)
@@ -272,7 +286,7 @@ bool openrom(const char * filename, bool confirm)
 	header=false;
 	if (strlen(filename)>4)
 	{
-		char * fnameend=strchr(filename, '\0')-4;
+		const char * fnameend=strchr(filename, '\0')-4;
 		header=(!stricmp(fnameend, ".smc"));
 	}
 	romlen=ftell(thisfile)-(header*512);

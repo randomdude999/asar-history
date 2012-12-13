@@ -31,18 +31,17 @@ static long double getnumcore()
 	if (*str=='$')
 	{
 		if (!isxdigit(str[1])) error("Invalid hex value.");
-		while (str[1]=='0') str++;//to block $0xEA
-		return strtol(str+1, (char**)&str, 16);
+		if (tolower(str[2])=='x') return -42;//let str get an invalid value so it'll throw an invalid operator later on
+		return strtoul(str+1, (char**)&str, 16);
 	}
 	if (*str=='%')
 	{
 		if (str[1]!='0' && str[1]!='1') error("Invalid binary value.");
-		return strtol(str+1, (char**)&str, 2);
+		return strtoul(str+1, (char**)&str, 2);
 	}
-	if (isdigit(*str))
+	if (isdigit(*str) || *str=='.')
 	{
-		if (math_round) return strtol(str, (char**)&str, 10);
-		else return strtod(str, (char**)&str);
+		return strtod(str, (char**)&str);
 	}
 	if (isalpha(*str) || *str<0 || *str>127)
 	{
@@ -100,6 +99,8 @@ static long double getnumcore()
 			func("log", 1, log(params[0]));
 			func("log10", 1, log10(params[0]));
 			func("log2", 1, log(params[0])/log(2.0));
+			func("ln", 1, log(params[0]));
+			func("lg", 1, log10(params[0]));
 			//varfunc("min", {
 			//		if (!numparams) error("Wrong number of parameters to function.");
 			//		double minval=params[0];
@@ -150,7 +151,7 @@ static long double getnum()
 	prefix("-", -val);
 	prefix("~", ~(int)val);
 	prefix("+", val);
-	prefix("#", val);
+	//prefix("#", val);
 #undef prefix
 	return sanitize(getnumcore());
 }
@@ -190,11 +191,11 @@ static long double eval(int depth)
 		oper("%", 3, right?fmod(left, right):error("Modulos by zero."));
 		oper("+", 2, left+right);
 		oper("-", 2, left-right);
-		oper("<<", 1, (int)left<<(int)right);
-		oper(">>", 1, (int)left>>(int)right);
-		oper("&", 0, (int)left&(int)right);
-		oper("|", 0, (int)left|(int)right);
-		oper("^", 0, (int)left^(int)right);
+		oper("<<", 1, (unsigned int)left<<(unsigned int)right);
+		oper(">>", 1, (unsigned int)left>>(unsigned int)right);
+		oper("&", 0, (unsigned int)left&(unsigned int)right);
+		oper("|", 0, (unsigned int)left|(unsigned int)right);
+		oper("^", 0, (unsigned int)left^(unsigned int)right);
 		error("Unknown operator.");
 #undef oper
 	}

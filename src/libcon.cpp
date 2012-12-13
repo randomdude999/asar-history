@@ -1,3 +1,6 @@
+#undef printf//I compile Asar with -Dprintf=DO_NOT_USE -Dputs=DO_NOT_USE to make sure that no debug codes sneak past. They're legitime in here, though.
+#undef puts
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -71,8 +74,9 @@ static const char * requirestrfromuser(const char * question, bool filename)
 	*rval=0;
 	while (!strchr(rval, '\n') || *rval=='\n')
 	{
+		*rval=0;
 		printf("%s ", question);
-		fgets(rval, 250, stdin);
+		(void)fgets(rval, 250, stdin);
 	}
 	*strchr(rval, '\n')=0;
 	confirmclose=true;
@@ -93,7 +97,7 @@ static const char * requeststrfromuser(const char * question, bool filename, con
 	char * rval=(char*)malloc(256);
 	*rval=0;
 	printf("%s ", question);
-	fgets(rval, 250, stdin);
+	(void)fgets(rval, 250, stdin);
 	*strchr(rval, '\n')=0;
 	confirmclose=true;
 	if (!*rval) return defval;
@@ -115,7 +119,9 @@ void libcon_init(int argc, char ** argv, const char * usage_)
 	argsleft=argc-1;
 	usage=usage_;
 	libcon_interactive=(!argsleft);
+#if defined(_WIN32)
 	if (libcon_interactive) atexit(libcon_pause);
+#endif
 }
 
 const char * libcon_require(const char * desc)

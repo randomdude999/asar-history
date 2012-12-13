@@ -14,7 +14,15 @@
 
 extern const int asarver_maj=1;
 extern const int asarver_min=3;
-extern const int asarver_bug=0;
+extern const int asarver_bug=5;
+extern const bool asarver_beta=false;
+
+#ifdef _I_RELEASE
+extern char blockbetareleases[(!asarver_beta)?1:-1];
+#endif
+#ifdef _I_DEBUG
+extern char blockreleasedebug[(asarver_beta)?1:-1];
+#endif
 
 unsigned const char * romdata_r;
 int romlen_r;
@@ -83,8 +91,10 @@ extern int freespaceextra;
 extern int freespaceid;
 extern int freespacepos[256];
 
+void checkbankcross();
+
 extern bool warnxkas;
-extern bool suppresswarnings;
+extern bool emulatexkas;
 
 static bool freespaced;
 static int getlenforlabel(int snespos, int thislabel, bool exists)
@@ -239,7 +249,13 @@ void resolvedefines(string& out, const char * start)
 	const char * here=start;
 	while (*here)
 	{
-		if (*here=='!')
+		if (*here=='"' && emulatexkas)
+		{
+			out+=*here++;
+			while (*here && *here!='"') out+=*here++;
+			out+=*here++;
+		}
+		else if (*here=='!')
 		{
 			bool first=(here==start || (here>=start+4 && here[-1]==' ' && here[-2]==':' && here[-3]==' '));//check if it's the start of a block
 			string defname;
@@ -273,7 +289,7 @@ void resolvedefines(string& out, const char * start)
 			}
 			if (warnxkas && here[0]=='(' && here[1]==')')
 				warn0("xkas compatibility warning: Unlike xkas, Asar does not eat parentheses after defines");
-			//if (emulate && here[0]=='(' && here[1]==')') here+=2;
+			//if (emulatexkas && here[0]=='(' && here[1]==')') here+=2;
 			if (first)
 			{
 				enum {
@@ -281,13 +297,16 @@ void resolvedefines(string& out, const char * start)
 					append,
 					expand,
 					domath,
+					setifnotset,
 				} mode;
 				if(0);
 				else if (stribegin(here,  " = ")) { here+=3; mode=null; }
 				else if (stribegin(here, " += ")) { here+=4; mode=append; }
 				else if (stribegin(here, " := ")) { here+=4; mode=expand; }
 				else if (stribegin(here, " #= ")) { here+=4; mode=domath; }
+				else if (stribegin(here, " ?= ")) { here+=4; mode=setifnotset; }
 				else goto notdefineset;
+				if (emulatexkas && mode!=null) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 				//else if (stribegin(here, " equ ")) here+=5;
 				string val;
 				if (*here=='"')
@@ -341,6 +360,12 @@ void resolvedefines(string& out, const char * start)
 						int num=getnum(newval);
 						if (foundlabel) error<errline>(0, "!Define #= Label is not allowed");
 						defines.insert(defname, dec(num));
+						break;
+					}
+					case setifnotset:
+					{
+						string idontcare;
+						if (!defines.find(defname, idontcare)) defines.insert(defname, val);
 						break;
 					}
 				}
@@ -402,7 +427,6 @@ void assembleline(const char * fname, int linenum, const char * line)
 			{
 				try
 				{
-					suppresswarnings=false;
 					itrim(blocks[block], " ", " ", true);
 					thisfilename=fname;
 					thisline=linenum;//do not optimize, this one is recursive
@@ -410,7 +434,7 @@ void assembleline(const char * fname, int linenum, const char * line)
 					assembleblock(blocks[block]);
 				}
 				catch (errblock&) {}
-				asarverallowed=false;
+				if (blocks[block][0]!='\0' && blocks[block][0]!='@') asarverallowed=false;
 			}
 		}
 	}
@@ -421,8 +445,11 @@ void assembleline(const char * fname, int linenum, const char * line)
 extern int numif;
 extern int numtrue;
 
+int incsrcdepth=0;
+
 void assemblefile(const char * filename, bool toplevel)
 {
+	incsrcdepth++;
 	thisfilename=filename;
 	thisline=-1;
 	thisblock=NULL;
@@ -439,13 +466,23 @@ void assemblefile(const char * filename, bool toplevel)
 		lines=split(temp, "\n");
 		for (int i=0;lines[i];i++)
 		{
-			if (strqchr(lines[i], ';')) *strqchr(lines[i], ';')=0;
-			while (strqchr(lines[i], '\t')) *strqchr(lines[i], '\t')=' ';
-			if (!confirmquotes(lines[i])) { thisline=i; thisblock=lines[i]; error<errnull>(0, "Mismatched quotes"); lines[i][0]='\0'; }
-			itrim(lines[i], " ", " ", true);
-			for (int j=1;strqchr(lines[i], ',') && !strqrchr(lines[i], ',')[1] && lines[i+j];j++)
+			char * line=lines[i];
+			char * comment=line;
+			while ((comment=strqchr(comment, ';')))
 			{
-				strcat(lines[i], lines[i+j]);
+				if (comment[1]!='@') comment[0]='\0';
+				else
+				{
+					if (strncasecmp(comment+2, "xkas", 4)) comment[1]=' ';
+					comment[0]=' ';
+				}
+			}
+			while (strqchr(line, '\t')) *strqchr(line, '\t')=' ';
+			if (!confirmquotes(line)) { thisline=i; thisblock=line; error<errnull>(0, "Mismatched quotes"); line[0]='\0'; }
+			itrim(line, " ", " ", true);
+			for (int j=1;strqchr(line, ',') && !strqchr(line, ',')[1] && lines[i+j];j++)
+			{
+				strcat(line, lines[i+j]);
 				static char nullstr[]="";
 				lines[i+j]=nullstr;
 			}
@@ -485,6 +522,7 @@ void assemblefile(const char * filename, bool toplevel)
 	}
 	thisline++;
 	thisblock=NULL;
+	checkbankcross();
 	if (inmacro)
 	{
 		error<errnull>(0, "Unclosed macro");
@@ -501,6 +539,7 @@ void assemblefile(const char * filename, bool toplevel)
 		numtrue=startif;
 		error<errnull>(0, "Unclosed if statement");
 	}
+	incsrcdepth--;
 }
 
 bool checksum=true;

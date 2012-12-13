@@ -5,6 +5,7 @@
 
 static int writesizeto=-1;
 static int inlinestartpos=0;
+extern bool emulatexkas;
 
 static void inline_finalizeorg()
 {
@@ -168,7 +169,7 @@ bool asblock_spc700(char** word, int numwords)
 		op("notc", 0xED);
 		op("sleep", 0xEF);
 		op("stop", 0xFF);
-		op("xcn", 0x9E);
+		op("xcn", 0x9F);
 		else return false;
 #undef op
 	}
@@ -313,16 +314,17 @@ bool asblock_spc700(char** word, int numwords)
 #define vc(left1, right1, str2) if (isvc(left1, right1, str2))
 #define vv(left1, right1, left2, right2) if (isvv(left1, right1, left2, right2))
 #define w0(opcode) do { write1(opcode); return true; } while(0)
-#define w1(opcode, math) do { write1(opcode); write1(getnum(math)); return true; } while(0)
+#define w1(opcode, math) do { write1(opcode); int val=getnum(math); \
+													if (val&0xFF00) warn0("This opcode does not exist with 16-bit parameters, assuming 8-bit"); write1(val); return true; } while(0)
 #define w2(opcode, math) do { write1(opcode); write2(getnum(math)); return true; } while(0)
 #define wv(opcode1, opcode2, math) do { if (getlen(math)==1) { write1(opcode1); write1(getnum(math)); } \
 																	 else { write1(opcode2); write2(getnum(math)); } return true; } while(0)
 #define w11(opcode, math1, math2) do { write1(opcode); write1(getnum(math1)); write1(getnum(math2)); return true; } while(0)
 #define wr(opcode, math) do { int len=getlen(math); int num=getnum(math); int pos=(len==1)?num:num-(snespos+2); \
-								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, "Relative branch out of bounds"); \
+								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, S"Relative branch out of bounds (distance is "+dec(pos)+")"); \
 								write1(opcode); write1(pos); return true; } while(0)
 #define w1r(opcode, math1, math2) do { int len=getlen(math2); int num=getnum(math2); int pos=(len==1)?num:num-(snespos+3); \
-								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, "Relative branch out of bounds"); \
+								if (pass && foundlabel && (pos<-128 || pos>127)) error(2, S"Relative branch out of bounds (distance is "+dec(pos)+")"); \
 								write1(opcode); write1(getnum(math1)); write1(pos); return true; } while(0)
 			string s1;
 			string s2;
@@ -357,11 +359,9 @@ bool asblock_spc700(char** word, int numwords)
 #undef isop
 			if (is("mov"))
 			{
-				//cc("(x)+"   , "a"      ) w0(0xAF);//these two are just confusing
 				if (iscc("(x)+", "a")) error(0, "Use (x+) instead.");
 				cc("(x+)"   , "a"      ) w0(0xAF);
 				cc("(x)"    , "a"      ) w0(0xC6);
-				//cc("a"      , "(x)+"   ) w0(0xBF);
 				if (iscc("a", "(x)+")) error(0, "Use (x+) instead.");
 				cc("a"      , "(x+)"   ) w0(0xBF);
 				cc("a"      , "(x)"    ) w0(0xE6);

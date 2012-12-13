@@ -1,3 +1,6 @@
+#undef printf//I compile Asar with -Dprintf=DO_NOT_USE -Dputs=DO_NOT_USE to make sure that no debug codes sneak past. They're legitime in here, though.
+#undef puts
+
 #ifdef INTERFACE_CLI
 #include "asar.h"
 #include "scapegoat.hpp"
@@ -5,6 +8,21 @@
 #include "libcon.h"
 #include "libsmw.h"
 #include <stdio.h>
+
+#ifdef TIMELIMIT
+# if defined(linux)
+#  include <sys/resource.h>
+#  include <signal.h>
+# elif defined(_WIN32)
+//WARNING: The Windows equivalent of SIGXCPU, job limits, is very poorly suited for short-running
+// tasks like this; it's only checked approximately every seven seconds on the machine I tested on,
+// and it kills the process instantly once this happens. (Additionally, due to an implementation
+// quirk, it'll bug up if you ask for anything above about seven minutes, so don't do that.)
+#  include <windows.h>
+# else
+#  error Time limits not configured for this OS.
+# endif
+#endif
 
 //specialized for Linux and Windows for performance - it will still work on anything that only provides libc though
 #if defined(linux)
@@ -90,19 +108,42 @@ void reseteverything();
 bool werror=false;
 bool warned=false;
 
-extern bool suppresswarnings;
-
 void warn(const char * e_)
 {
-	if (!suppresswarnings)
-	{
-		fputs(S getdecor()+"warning: "+e_+"\n", errloc);
-		warned=true;
-	}
+	fputs(S getdecor()+"warning: "+e_+"\n", errloc);
+	warned=true;
 }
+
+#ifdef TIMELIMIT
+#if defined(linux)
+void onsigxcpu(int ignored)
+{
+	error<errnull>(pass, "Time limit exceeded.");
+	exit(1);
+}
+#elif defined(_WIN32)
+#endif
+#endif
 
 int main(int argc, char * argv[])
 {
+#ifdef TIMELIMIT
+#if defined(linux)
+	rlimit lim;
+	lim.rlim_cur=TIMELIMIT;
+	lim.rlim_max=RLIM_INFINITY;
+	setrlimit(RLIMIT_CPU, &lim);
+	signal(SIGXCPU, onsigxcpu);
+#elif defined(_WIN32)
+	HANDLE hjob=CreateJobObject(NULL, NULL);
+	AssignProcessToJobObject(hjob, GetCurrentProcess());
+	JOBOBJECT_BASIC_LIMIT_INFORMATION jbli;
+	jbli.LimitFlags=JOB_OBJECT_LIMIT_PROCESS_TIME;
+	jbli.PerProcessUserTimeLimit.LowPart=10*1000*1000*TIMELIMIT;
+	jbli.PerProcessUserTimeLimit.HighPart=0;
+	SetInformationJobObject(hjob, JobObjectBasicLimitInformation, &jbli, sizeof(jbli));
+#endif
+#endif
 #define pause(sev) do { if (pause>=pause_##sev) libcon_pause(); } while(0)
 	enum {
 		pause_no,
@@ -113,7 +154,8 @@ int main(int argc, char * argv[])
 	try
 	{
 		initmathcore();
-		string version=S"Asar "+dec(asarver_maj)+"."+dec(asarver_min)+((asarver_bug>=10 || asarver_min>=10)?".":"")+dec(asarver_bug)+", by Alcaro";
+		string version=S"Asar "+dec(asarver_maj)+"."+dec(asarver_min)+((asarver_bug>=10 || asarver_min>=10)?".":"")+
+				dec(asarver_bug)+(asarver_beta?"pre":"")+", by Alcaro";
 		char * myname=argv[0];
 		if (strrchr(myname, '/')) myname=strrchr(myname, '/')+1;
 		//char * dot=strrchr(myname, '.');

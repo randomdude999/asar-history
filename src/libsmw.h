@@ -29,7 +29,7 @@ inline int snestopc(int addr)
 	if (mapper==lorom)
 	{
 		if ((addr&0xF00000)==0x700000 ||//wram, sram
-			(addr&0x408000)==0x000000)//hardware regs, ram mirrors, rom mirrors, other strange junk
+			(addr&0x408000)==0x000000)//area that shouldn't be used in lorom
 				return -1;
 		addr=((addr&0x7F0000)>>1|(addr&0x7FFF));
 		return addr;
@@ -75,8 +75,9 @@ inline int pctosnes(int addr)
 	{
 		if (addr<0 || addr>=0x400000) return -1;
 		addr=((addr<<1)&0x7F0000)|(addr&0x7FFF)|0x8000;
-		if ((addr&0xF00000)==0x700000) return -1;
-		return addr;
+		return addr|0x800000;
+		//if ((addr&0xF00000)==0x700000) return addr|0x800000;
+		//return addr;
 	}
 	if (mapper==hirom)
 	{
@@ -98,8 +99,8 @@ inline int pctosnes(int addr)
 	return -1;
 }
 
-int getpcfreespace(int size, bool isforcode, bool autoexpand=true, bool respectbankborders=true);
-int getsnesfreespace(int size, bool isforcode, bool autoexpand=true, bool respectbankborders=true);
+int getpcfreespace(int size, bool isforcode, bool autoexpand=true, bool respectbankborders=true, bool align=false);
+int getsnesfreespace(int size, bool isforcode, bool autoexpand=true, bool respectbankborders=true, bool align=false);
 
 void resizerats(int snesaddr, int newlen);
 void removerats(int snesaddr);

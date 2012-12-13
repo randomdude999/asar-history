@@ -59,10 +59,21 @@ int main(int argc, char * argv[])
 			if (pos>len) len=pos;
 		}
 	}
+	
+	//this is rather hacky and fragile, but it works. it's not like anyone's gonna use this thing
+	char * asmdata=(char*)malloc(65536);
+	strcpy(asmdata, line);
+	char * asmdataend=strchr(asmdata, '\0');
+	asmdataend[fread(asmdataend, 1, 65536, asmfile)]='\0';
+	FILE * azmfile=fopen("a.azm", "wt");
+	while (asmdata[0]=='\n') asmdata++;
+	fwrite(asmdata, 1, strlen(asmdata), azmfile);
+	fclose(azmfile);
+	
 	fclose(asmfile);
 	fclose(rom);
 	
-	sprintf(cmd, "asar \"%s\" a.sfc 2>err.log 1>nul", fname);
+	sprintf(cmd, "asar a.azm a.sfc > err.log 2>&1", fname);
 	for (int i=0;i<numiter;i++) system(cmd);
 	FILE * err=fopen("err.log", "rt");
 	fseek(err, 0, SEEK_END);

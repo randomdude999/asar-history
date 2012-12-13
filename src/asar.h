@@ -1,4 +1,4 @@
-#if (defined(__sun__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && !defined(linux)
+#if (defined(__sun__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__APPLE__)) && !defined(linux)
 #error Please use -Dlinux on non-Linux Unix-likes.
 #endif
 
@@ -36,7 +36,7 @@ extern bool foundlabel;
 
 //extern bool emulate;
 
-enum { arch_null, arch_65816, arch_spc700_inline, arch_spc700_raw, arch_superfx };
+enum { arch_65816, arch_spc700, arch_spc700_inline, arch_superfx };
 extern int arch;
 
 template<typename t> void error(int neededpass, const char * e_);
@@ -101,3 +101,4 @@ public:
 extern const int asarver_maj;
 extern const int asarver_min;
 extern const int asarver_bug;
+extern const bool asarver_beta;

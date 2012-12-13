@@ -103,11 +103,9 @@ void initmathcore();
 void initstuff();
 void finishpass();
 
-extern bool suppresswarnings;
-
 void warn(const char * str)
 {
-	if (!suppresswarnings) fillerror(warnings[numwarn++], "warning: ", str);
+	fillerror(warnings[numwarn++], "warning: ", str);
 }
 
 void reseteverything();
@@ -182,12 +180,12 @@ EXPORT void asar_close()
 #define maxromsize (16*1024*1024)
 EXPORT bool asar_patch(const char * patchloc, char * romdata_, int buflen, int * romlen_)
 {
-	if (buflen==maxromsize) romdata_r=(unsigned char*)romdata_;
-	else
+	if (buflen!=maxromsize)
 	{
 		romdata_r=(unsigned char*)malloc(maxromsize);
-		memcpy(romdata, romdata_, *romlen_);
+		memcpy((char*)romdata_r/*we just allocated this, it's safe to violate its const*/, romdata_, *romlen_);
 	}
+	else romdata_r=(unsigned char*)romdata_;
 	romdata=(unsigned char*)malloc(maxromsize);
 	memcpy(romdata, romdata_, *romlen_);
 	resetdllstuff();
@@ -336,5 +334,4 @@ EXPORT double asar_math(const char * str, const char ** e)//degrading to normal 
 	ismath=false;
 	return rval;
 }
-
 #endif
