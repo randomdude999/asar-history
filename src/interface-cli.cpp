@@ -80,13 +80,19 @@ void print(const char * str)
 }
 
 FILE * errloc=stderr;
+static int errnum=0;
 
 template<typename t> void error(int neededpass, const char * e_)
 {
 	try
 	{
 		errored=true;
-		if (pass==neededpass) fputs(S getdecor()+"error: "+e_+(thisblock?(S" ["+thisblock+"]"):"")+"\n", errloc);
+		if (pass==neededpass)
+		{
+			errnum++;
+			fputs(S getdecor()+"error: "+e_+(thisblock?(S" ["+thisblock+"]"):"")+"\n", errloc);
+			if (errnum==20+1) error<errfatal>(pass, "Over 20 errors detected. Aborting.");
+		}
 		t err;
 		throw err;
 	}
@@ -122,8 +128,11 @@ void onsigxcpu(int ignored)
 	exit(1);
 }
 #elif defined(_WIN32)
+//null
 #endif
 #endif
+
+bool setmapper();
 
 int main(int argc, char * argv[])
 {
@@ -165,7 +174,7 @@ int main(int argc, char * argv[])
 		libcon_init(argc, argv,
 			"[options] patch [ROM]\n"
 			"options can be zero or more of the following:\n"
-			" -nocheck\n"
+			" -nocheck (disable verifying ROM title; note that it )\n"
 			" -pause={no, err, warn, yes}\n"
 			" -verbose\n"
 			" -v or -version\n"
@@ -237,40 +246,8 @@ int main(int argc, char * argv[])
 		//check if the ROM title and checksum looks sane
 		if (romlen>=32768 && !ignoreerrors)
 		{
-			int maxscore=-99999;
-			mapper_t bestmap=lorom;
-			mapper_t maps[]={lorom, hirom};
-			for (size_t mapid=0;mapid<sizeof(maps)/sizeof(maps[0]);mapid++)
-			{
-				mapper=maps[mapid];
-				int score=0;
-				int highbits=0;
-				bool foundnull=false;
-				for (int i=0;i<21;i++)
-				{
-					unsigned char c=romdata[snestopc(0x00FFC0+i)];
-					if (foundnull && c) score-=4;//according to some documents, NUL terminated names are possible - but they shouldn't appear in the middle of the name
-					if (c>=128) highbits++;
-					else if (isupper(c)) score+=3;
-					else if (c==' ') score+=2;
-					else if (isdigit(c)) score+=1;
-					else if (islower(c)) score+=1;
-					else if (c=='-') score+=1;
-					else if (!c) foundnull=true;
-					else score-=3;
-				}
-				if (highbits>0 && highbits<=14) score-=21;//high bits set on some, but not all, bytes = unlikely to be a ROM
-				if ((romdata[snestopc(0x00FFDE)]^romdata[snestopc(0x00FFDC)])!=0xFF ||
-						(romdata[snestopc(0x00FFDF)]^romdata[snestopc(0x00FFDD)])!=0xFF) score=-99999;//checksum doesn't match up to 0xFFFF? Not a ROM.
-				//too lazy to check the real checksum
-				if (score>maxscore)
-				{
-					maxscore=score;
-					bestmap=mapper;
-				}
-			}
-			mapper=bestmap;
-			if (maxscore<0)
+			bool validtitle=setmapper();
+			if (!validtitle)
 			{
 				string title;
 				for (int i=0;i<21;i++)

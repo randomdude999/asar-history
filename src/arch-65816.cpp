@@ -152,7 +152,7 @@ bool asblock_65816(char** word, int numwords)
 		as1("LDX", 0xB6);
 		as1("STX", 0x96);
 		as2("LDX", 0xBE);
-		if (len==1)
+		if (len==1 && (is("ORA") || is("AND") || is("EOR") || is("ADC") || is("STA") || is("LDA") || is("CMP") || is("SBC")))
 		{
 			warn0(S word[0]+" $xx,y is not valid with 8-bit parameters, assuming 16-bit");
 			len=2;

@@ -14,7 +14,7 @@
 
 extern const int asarver_maj=1;
 extern const int asarver_min=3;
-extern const int asarver_bug=5;
+extern const int asarver_bug=6;
 extern const bool asarver_beta=false;
 
 #ifdef _I_RELEASE
@@ -56,6 +56,52 @@ void startmacro(const char * line);
 void tomacro(const char * line);
 void endmacro(bool insert);
 void callmacro(const char * data);
+
+bool setmapper()
+{
+	int maxscore=-99999;
+	mapper_t bestmap=lorom;
+	mapper_t maps[]={lorom, hirom};
+	for (size_t mapid=0;mapid<sizeof(maps)/sizeof(maps[0]);mapid++)
+	{
+		mapper=maps[mapid];
+		int score=0;
+		int highbits=0;
+		bool foundnull=false;
+		for (int i=0;i<21;i++)
+		{
+			unsigned char c=romdata[snestopc(0x00FFC0+i)];
+			if (foundnull && c) score-=4;//according to some documents, NUL terminated names are possible - but they shouldn't appear in the middle of the name
+			if (c>=128) highbits++;
+			else if (isupper(c)) score+=3;
+			else if (c==' ') score+=2;
+			else if (isdigit(c)) score+=1;
+			else if (islower(c)) score+=1;
+			else if (c=='-') score+=1;
+			else if (!c) foundnull=true;
+			else score-=3;
+		}
+		if (highbits>0 && highbits<=14) score-=21;//high bits set on some, but not all, bytes = unlikely to be a ROM
+		if ((romdata[snestopc(0x00FFDE)]^romdata[snestopc(0x00FFDC)])!=0xFF ||
+				(romdata[snestopc(0x00FFDF)]^romdata[snestopc(0x00FFDD)])!=0xFF) score=-99999;//checksum doesn't match up to 0xFFFF? Not a ROM.
+		//too lazy to check the real checksum
+		if (score>maxscore)
+		{
+			maxscore=score;
+			bestmap=mapper;
+		}
+	}
+	mapper=bestmap;
+	
+	//detect oddball mappers
+	int mapperbyte=romdata[snestopc(0x00FFD5)];
+	int romtypebyte=romdata[snestopc(0x00FFD6)];
+	if (mapper==lorom)
+	{
+		if (mapperbyte==0x23 && (romtypebyte==0x32 || romtypebyte==0x34 || romtypebyte==0x35)) mapper=sa1rom;
+	}
+	return (maxscore>=0);
+}
 
 string getdecor()
 {

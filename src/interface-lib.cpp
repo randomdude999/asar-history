@@ -159,7 +159,7 @@ EXPORT int asar_version()
 EXPORT int asar_apiversion()
 {
 	expectsNewAPI=true;
-	return 200;
+	return 201;
 }
 
 EXPORT bool asar_reset()
@@ -201,6 +201,7 @@ EXPORT bool asar_patch(const char * patchloc, char * romdata_, int buflen, int *
 		}
 	}
 	catch(errfatal&){}
+	if (romdata_!=(char*)romdata_r) free((char*)romdata_r);
 	if (buflen<romlen) error<errnull>(pass, "The given buffer is too small to contain the resulting ROM.");
 	if (errored)
 	{
@@ -209,7 +210,7 @@ EXPORT bool asar_patch(const char * patchloc, char * romdata_, int buflen, int *
 	}
 	*romlen_=romlen;
 	memcpy(romdata_, romdata, romlen);
-	if (buflen!=maxromsize) free(romdata);
+	free(romdata);
 	return true;
 }
 

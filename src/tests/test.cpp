@@ -94,7 +94,7 @@ int main(int argc, char * argv[])
 	bool fail=false;
 	for (int i=0;i<min(len, truelen);i++)
 	{
-		if (truerom[i]!=expectedrom[i])
+		if (truerom[i]!=expectedrom[i] && !(i>=0x07FDC && i<=0x07FDF && (expectedrom[i]==0x00 || expectedrom[i]==smwrom[i])))
 		{
 			printf("%s: Mismatch at %.5X: Expected %.2X, got %.2X\n", fname, i, (unsigned char)expectedrom[i], (unsigned char)truerom[i]);
 			fail=true;

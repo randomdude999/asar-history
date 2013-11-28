@@ -306,7 +306,7 @@ string labelname(const char ** rawname, bool define=false)
 		if (emulatexkas && i>1) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		if (i)
 		{
-			if (!sublabels[i-1]) error(0, "Sublevel nesting is jumping around too much");
+			if (!sublabels[i-1]) error(0, "This label has no parent.");
 			name+=S sublabels[i-1]+"_";
 		}
 	}
@@ -873,6 +873,7 @@ void assembleblock(const char * block)
 		emulatexkas=true;
 		optimizeforbank=0x100;
 		checksum=false;
+		sublabels[0]=":xkasdefault:";
 	}
 	else if (is0("@include") || is1("@includefrom"))
 	{
@@ -1560,6 +1561,11 @@ bool assemblemapper(char** word, int numwords)
 		//fastrom=false;
 		checksum=false;//we don't know where the header is, so don't set the checksum
 	}
+	else if (is0("fullsa1rom"))
+	{
+		mapper=bigsa1rom;
+		//fastrom=false;
+	}
 	else if (is("sa1rom"))
 	{
 		//fastrom=false;
@@ -1586,7 +1592,6 @@ bool assemblemapper(char** word, int numwords)
 			sa1banks[5]=3<<20;
 		}
 		mapper=sa1rom;
-//#warning may want to check checksums here...
 	}
 	else if (is0("header"))
 	{

@@ -6,9 +6,11 @@ bool openrom(const char * filename, bool confirm=true);
 void closerom(bool save=true);
 
 enum mapper_t {
+	invalid_mapper,
 	lorom,
 	hirom,
 	sa1rom,
+	bigsa1rom,
 	sfxrom,
 	norom,
 } extern mapper;
@@ -62,6 +64,19 @@ inline int snestopc(int addr)
 		}
 		return -1;
 	}
+	if (mapper==bigsa1rom)
+	{
+		if ((addr&0xC00000)==0xC00000)//hirom
+		{
+			return (addr&0x3FFFFF)|0x400000;
+		}
+		if ((addr&0xC00000)==0x000000 || (addr&0xC00000)==0x800000)//lorom
+		{
+			if ((addr&0x008000)==0x000000) return -1;
+			return (addr&0x800000)>>2 | (addr&0x3F0000)>>1 | (addr&0x7FFF);
+		}
+		return -1;
+	}
 	if (mapper==norom)
 	{
 		return addr;
@@ -71,9 +86,10 @@ inline int snestopc(int addr)
 
 inline int pctosnes(int addr)
 {
+	if (addr<0) return -1;
 	if (mapper==lorom)
 	{
-		if (addr<0 || addr>=0x400000) return -1;
+		if (addr>=0x400000) return -1;
 		addr=((addr<<1)&0x7F0000)|(addr&0x7FFF)|0x8000;
 		return addr|0x800000;
 		//if ((addr&0xF00000)==0x700000) return addr|0x800000;
@@ -81,7 +97,7 @@ inline int pctosnes(int addr)
 	}
 	if (mapper==hirom)
 	{
-		if (addr<0 || addr>=0x400000) return -1;
+		if (addr>=0x400000) return -1;
 		return addr|0xC00000;
 	}
 	if (mapper==sa1rom)
@@ -89,6 +105,23 @@ inline int pctosnes(int addr)
 		for (int i=0;i<8;i++)
 		{
 			if (sa1banks[i]==(addr&0x600000)) return 0x008000|(i<<21)|((addr&0x0F8000)<<1)|(addr&0x7FFF);
+		}
+		return -1;
+	}
+	if (mapper==bigsa1rom)
+	{
+		if (addr>=0x800000) return -1;
+		if ((addr&0x400000)==0x400000)
+		{
+			return addr|0xC00000;
+		}
+		if ((addr&0x600000)==0x000000)
+		{
+			return ((addr<<1)&0x3F0000)|0x8000|(addr&0x7FFF);
+		}
+		if ((addr&0x600000)==0x200000)
+		{
+			return 0x800000|((addr<<1)&0x3F0000)|0x8000|(addr&0x7FFF);
 		}
 		return -1;
 	}
