@@ -74,6 +74,7 @@ extern int bytes;
 
 int getlen(const char * str, bool optimizebankextraction=false);
 int getnum(const char * str);
+long double getnumdouble(const char * str);
 
 int getlenfromchar(char c);
 
@@ -96,6 +97,12 @@ public:
 	{
 		recursioncount--;
 	}
+};
+
+struct whiletracker {
+	bool iswhile;
+	int startline;
+	bool cond;
 };
 
 extern const int asarver_maj;

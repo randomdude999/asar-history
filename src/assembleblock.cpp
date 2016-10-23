@@ -15,6 +15,7 @@ int startpos;
 int realstartpos;
 
 bool emulatexkas;
+bool specifiedasarver = false;
 
 extern int optimizeforbank;
 
@@ -595,7 +596,8 @@ bool addlabel(const char * label, int pos=-1)
 
 autoarray<bool> elsestatus;
 int numtrue=0;//if 1 -> increase both
-int numif=0;  //if 0 or inside if 0 -> increase only numif
+int numif = 0;  //if 0 or inside if 0 -> increase only numif
+autoarray<whiletracker> whilestatus;
 
 extern bool asarverallowed;
 extern bool istoplevel;
@@ -612,11 +614,32 @@ extern int macrorecursion;
 
 int freespaceuse=0;
 
+void resolvedefines(string& out, const char * start);
+
 void assembleblock(const char * block)
 {
 	string tmp=block;
 	int numwords;
-	char ** word=qsplit(tmp.str, " ", &numwords);
+	char ** word = qsplit(tmp.str, " ", &numwords);
+	string resolved;
+
+#define is(test) (!stricmp(word[0], test))
+#define is0(test) (!stricmp(word[0], test) && numwords==1)
+#define is1(test) (!stricmp(word[0], test) && numwords==2)
+#define is2(test) (!stricmp(word[0], test) && numwords==3)
+#define is3(test) (!stricmp(word[0], test) && numwords==4)
+#define is4(test) (!stricmp(word[0], test) && numwords==5)
+#define is5(test) (!stricmp(word[0], test) && numwords==6)
+#define par word[1]
+
+	// RPG Hacker: Hack to fix the bug where defines in elseifs would never get resolved
+	// This really seems like the only possible place for the fix
+	if (is("elseif") && numtrue+1==numif)
+	{
+		resolvedefines(resolved, block);
+		word = qsplit(resolved.str, " ", &numwords);
+	}
+
 	autoptr<char**> wordcopy=word;
 	while (numif==numtrue && word[0] && addlabel(word[0]))
 	{
@@ -639,18 +662,16 @@ void assembleblock(const char * block)
 		}
 		return;
 	}
-#define is(test) (!stricmp(word[0], test))
-#define is0(test) (!stricmp(word[0], test) && numwords==1)
-#define is1(test) (!stricmp(word[0], test) && numwords==2)
-#define is2(test) (!stricmp(word[0], test) && numwords==3)
-#define is3(test) (!stricmp(word[0], test) && numwords==4)
-#define is4(test) (!stricmp(word[0], test) && numwords==5)
-#define is5(test) (!stricmp(word[0], test) && numwords==6)
-#define par word[1]
-	if (is("if") || is("elseif") || is("assert"))
+	if (is("if") || is("elseif") || is("assert") || is("while"))
 	{
 		if (emulatexkas) warn0("Convert the patch to native Asar format instead of making an Asar-only xkas patch.");
 		const char * errmsg=NULL;
+		whiletracker wstatus;		
+		wstatus.startline = thisline;
+		wstatus.iswhile = false;
+		wstatus.cond = false;
+		if (is("while")) wstatus.iswhile = true;
+		whiletracker& addedwstatus = (whilestatus[numif] = wstatus);
 		if (is("assert"))
 		{
 			char * rawerrmsg=strchr(word[numwords-1], ',');
@@ -662,10 +683,10 @@ void assembleblock(const char * block)
 		}
 		if (numtrue!=numif && !(is("elseif") && numtrue+1==numif))
 		{
-			if (is("if") && !moreonline) numif++;
+			if ((is("if") || is("while")) && !moreonline) numif++;
 			return;
 		}
-		if (is("if") && !moreonline) numif++;
+		if ((is("if") || is("while")) && !moreonline) numif++;
 		bool cond;
 
 		char ** nextword=word+1;
@@ -760,7 +781,7 @@ void assembleblock(const char * block)
 		//	cond=(val>0);
 		//}
 
-		if (is("if"))
+		if (is("if") || is("while"))
 		{
 			if(0);
 			else if (cond && moreonline) {}
@@ -774,9 +795,12 @@ void assembleblock(const char * block)
 			{
 				elsestatus[numif]=false;
 			}
+			addedwstatus.cond = cond;
 		}
 		else if (is("elseif"))
 		{
+			if (!numif) error(1, "Misplaced elseif");
+			if (whilestatus[numif-1].iswhile) error(1, "Can't use elseif in a while loop.");
 			if (moreonline) error(1, "Can't use elseif on single-line statements");
 			if (numif==numtrue) numtrue--;
 			if (cond && !elsestatus[numif])
@@ -797,12 +821,10 @@ void assembleblock(const char * block)
 		if (numif==numtrue) numtrue--;
 		numif--;
 	}
-//autoarray<bool> elsestatus;
-//int numtrue=0;//if 1 -> increase both
-//int numif=0;  //if 0 or inside if 0 -> increase only numif
 	else if (is0("else"))
 	{
 		if (!numif) error(1, "Misplaced else");
+		if (whilestatus[numif-1].iswhile) error(1, "Can't use else in a while loop.");
 		else if (numif==numtrue) numtrue--;
 		else if (numif==numtrue+1 && !elsestatus[numif])
 		{
@@ -832,7 +854,7 @@ void assembleblock(const char * block)
 	{
 		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
 		if (!par) return;
-		if (emulatexkas) error(0, "This file is incompatible with xkas emulation mode.");
+		if (emulatexkas) error(0, "Using @xkas and @asar in the same patch is not supported.");
 		int dots=0;
 		int dig=0;
 		for (int i=0;par[i];i++)
@@ -867,11 +889,13 @@ void assembleblock(const char * block)
 			int verbug=atoi(vers[2]);
 			if (vermin==asarver_min && verbug>asarver_bug) fatalerror("This version of Asar is too old for this patch.");
 		}
+		specifiedasarver = true;
 	}
 	else if (is0("@xkas"))
 	{
 		if (!asarverallowed) error(0, "This command may only be used at the start of a file.");
-		if (incsrcdepth!=1 && !emulatexkas) error(0, "This command may only be used in the root file.");
+		if (incsrcdepth != 1 && !emulatexkas) error(0, "This command may only be used in the root file.");
+		if (specifiedasarver) error(0, "Using @xkas and @asar in the same patch is not supported.");
 		emulatexkas=true;
 		optimizeforbank=0x100;
 		checksum=false;
@@ -1433,6 +1457,32 @@ void assembleblock(const char * block)
 			else if (!stricmp(pars[i], "pc")) out+=hex6(snespos&0xFFFFFF);
 			else if (!strncasecmp(pars[i], "dec(", strlen("dec("))) out+=dec(getnum(pars[i]+strlen("dec")));
 			else if (!strncasecmp(pars[i], "hex(", strlen("hex("))) out+=hex0(getnum(pars[i]+strlen("hex")));
+			else if (!strncasecmp(pars[i], "double(", strlen("double(")))
+			{
+				char * arg1pos = pars[i] + strlen("double(");
+				char * pos = arg1pos;
+
+				while (*pos != ',' && *pos != ')' && *pos != '\0') pos++;
+				if (*pos == '\0') error(2, "Mismatched parentheses");
+
+				char * arg1endpos = pos;
+
+				if (*pos == ')')
+				{
+					out += ftostrvar(getnumdouble(string(arg1pos, arg1endpos - arg1pos)), 5);
+				}
+				else
+				{
+					pos++;
+					char * arg2pos = pos;
+
+					while (*pos != ',' && *pos != ')' && *pos != '\0') pos++;
+					if (*pos == '\0') error(2, "Mismatched parentheses");
+					if (*pos == ',') error(2, "Wrong number of arguments to function double()");
+
+					out += ftostrvar(getnumdouble(string(arg1pos, arg1endpos - arg1pos)), getnum(string(arg2pos, pos - arg2pos)));
+				}
+			}
 			else error(2, "Unknown variable.");
 		}
 		if (pass!=2) return;
