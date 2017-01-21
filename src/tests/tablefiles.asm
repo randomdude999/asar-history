@@ -15,19 +15,19 @@
 
 org $008000
 
-table table.tbl
+table ../table.tbl
 db "ABCD"
 dw "ABCD"
 dl "ABCD"
 dd "ABCD"
 
-table table.tbl,ltr
+table ../table.tbl,ltr
 db "ABCD"
 dw "ABCD"
 dl "ABCD"
 dd "ABCD"
 
-table table-rtl.tbl,rtl
+table ../table-rtl.tbl,rtl
 db "ABCD"
 dw "ABCD"
 dl "ABCD"

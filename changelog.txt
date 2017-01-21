@@ -1,3 +1,40 @@
+v1.50 (by RPG Hacker):
+
+New features:
+- Added support for structs. Credits go to p4plus2: https://github.com/p4plus2/asar
+- Added API to Asar lib for getting information on all blocks of data written by Asar.
+- Added API to Asar lib for getting the mapper currently used by Asar.
+- Added support for ExLoROM and ExHiROM mappers.
+  NOTE: Based entirely on conversion tables I got from Ladida; don't know if these conversions
+  are actually correct.
+  Some features may not work as intended when using those mappers (such as freedata, for example),
+  but I can't verify this.
+- Added pushtable and pulltable commands, which let you back-up or restore the current character
+  table to the/from the stack.
+- Added "ext\notepad-plus-plus\syntax-highlighting.xml". This file can be imported into Notepad++
+  as a user-defined language to add syntax highlighting for Asar patches, featuring all commands
+  currently supported by Asar. By default, this syntax highlighting is enabled on all files with
+  an extension of .asm or .asr, but this can be customized via Notepad++.
+
+Bug fixes:
+- Lines starting with @ or ;@ that don't map to a recognized special command now only throw
+  warnings at best and no errors.
+- Rewrote code of tests a little to make them easier to execute and make them clean up their
+  own mess.
+- C# wrapper for Asar DLL was non-functional since it didn't specify a calling convention,
+  making it always lead to an exception in some scenarios.
+
+Notes:
+- Just like the last version, this version of Asar was built in MSVC rather than g++, but this
+  time I also updated the Asar DLL (which I had overlooked last time). I'm not sure if
+  Windows applications are compatible with DLLs that were built by a different compiler, so
+  if you're planning to use the DLL, this is something to watch out for. If you're planning
+  to use a compiler other than MSVC, I recommend just rebuilding the DLL from source
+  in whatever compiler you're using (or directly including the Asar library code in your
+  project).
+
+
+
 v1.40 (by RPG Hacker):
 
 New features:
@@ -6,7 +43,7 @@ New features:
   similiar to read1() etc. functions, except data is read from another file instead of from
   the ROM (note that offset is a PC offset, not a SNES offset). You can pass an optional
   third value which is returned if the read fails. These functions are primarily intended
-  for reading bytes from another file and then doing math witht hem. For example: reading
+  for reading bytes from another file and then doing math with them. For example: reading
   bytes from a Lunar Magic .pal file, converting them into a different format and then
   writing them to the ROM as a table that can directly be DMA'd to CGRAM without further
   conversions (all conversions happen at compile-time). As an additional bonus, all of those

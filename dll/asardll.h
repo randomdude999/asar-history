@@ -3,7 +3,7 @@
 #define asarfunc extern
 #endif
 
-#define expectedapiversion 200
+#define expectedapiversion 300
 
 #include <stdbool.h>
 
@@ -27,6 +27,28 @@ struct definedata {
 	const char * name;
 	const char * contents;
 };
+
+struct writtenblockdata {
+	int pcoffset;
+	int snesoffset;
+	int numbytes;
+};
+
+enum mappertype {
+	invalid_mapper,
+	lorom,
+	hirom,
+	sa1rom,
+	bigsa1rom,
+	sfxrom,
+	exlorom,
+	exhirom,
+	norom
+};
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 //Returns the version, in the format major*10000+minor*100+bugfix*1. This means that 1.2.34 would be
 // returned as 10234.
@@ -99,3 +121,13 @@ asarfunc const char * (*asar_resolvedefines)(const char * data, bool learnnew);
 // see if it's successful (NULL) or if it failed (non-NULL, contains a descriptive string). It does
 // not affect asar_geterrors.
 asarfunc double (*asar_math)(const char * math, const char ** error);
+
+//Get a list of all the blocks written to the ROM by calls such as asar_patch().
+asarfunc const struct writtenblockdata * (*asar_getwrittenblocks)(int * count);
+
+//Get the mapper currently used by Asar
+asarfunc enum mappertype (*asar_getmapper)();
+
+#ifdef __cplusplus
+	}
+#endif

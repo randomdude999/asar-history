@@ -41,7 +41,6 @@ bool asar_init()
 	if (asardll) return true;
 	asardll=getlib();
 	require(asardll);
-	void * tmp;
 #define loadi(name) loadraw("asar_"#name, asar_i_##name)
 #define load(name) loadraw("asar_"#name, asar_##name)
 	loadi(init);
@@ -59,6 +58,8 @@ bool asar_init()
 	load(getdefine);
 	load(getalldefines);
 	load(math);
+	load(getwrittenblocks);
+	load(getmapper);
 	if (asar_apiversion()<expectedapiversion || (asar_apiversion()/100)>(expectedapiversion/100)) return false;
 	require(asar_i_init());
 	return true;

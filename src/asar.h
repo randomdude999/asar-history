@@ -31,6 +31,19 @@ template<typename t> void error(int neededpass, const char * str);
 //void write3(unsigned int num);
 //void write4(unsigned int num);
 
+struct snes_struct {
+	string parent;
+	int base_end;
+	int struct_size;
+	int object_size;
+};
+
+// RPG Hacker: Really the only purpose of this struct is to support pushtable and pulltable
+// Also don't know where else to put this, so putting it in this header
+struct chartabledata {
+	unsigned int table[256];
+};
+
 extern int pass;
 extern bool foundlabel;
 

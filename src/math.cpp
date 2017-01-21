@@ -13,6 +13,7 @@ bool math_pri=true;
 bool math_round=false;
 
 extern bool emulatexkas;
+extern lightweight_map<string, snes_struct> structs;
 
 //int bp(const char * str)
 //{
@@ -397,7 +398,22 @@ static long double overlycomplicatedround(const funcparam& number, const funcpar
 	return asdouble;
 }
 
-extern unsigned int table[256];
+static int struct_size(const char *name)
+{
+	snes_struct structure;
+	if(!structs.find(name, structure)) error("Struct not found.");
+	return structure.struct_size;
+}
+
+static int object_size(const char *name)
+{
+	snes_struct structure;
+	if(!structs.find(name, structure)) error("Struct not found.");
+	return structure.object_size;
+}
+
+
+extern chartabledata table;
 
 // RPG Hacker: Kind of a hack, but whatever, it's the simplest solution
 static char errorstringbuffer[256];
@@ -426,7 +442,7 @@ static long double getnumcore()
 	if (*str=='\'')
 	{
 		if (!str[1] || str[2]!='\'') error("Invalid character.");
-		unsigned int rval=table[(unsigned char)str[1]];
+		unsigned int rval=table.table[(unsigned char)str[1]];
 		str+=3;
 		return rval;
 	}
@@ -437,13 +453,31 @@ static long double getnumcore()
 	if (isalpha(*str) || *str=='_' || *str=='.' || *str=='?')
 	{
 		const char * start=str;
-		while (isalnum(*str) || *str=='_') str++;
+		while (isalnum(*str) || *str == '_' || *str == '.') str++;
 		int len=str-start;
 		while (*str==' ') str++;
 		if (*str=='(')
 		{
 			str++;
 			while (*str==' ') str++;
+
+			if (!strncasecmp(start, "sizeof", len)) {
+				string label;
+				while (*str == ' ') str++;
+				while (isalnum(*str) || *str == '.') label += *(str++);
+				//printf("%s\n", (const char*)label);
+				if (*(str++) != ')') error("Malformed sizeof call.");
+				return struct_size(label);
+			}
+			if (!strncasecmp(start, "objectsize", len)) {
+				string label;
+				while (*str == ' ') str++;
+				while (isalnum(*str) || *str == '.') label += *(str++);
+				//printf("%s\n", (const char*)label);
+				if (*(str++) != ')') error("Malformed objectsize call.");
+				return object_size(label);
+			}
+
 			// RPG Hacker: This is only here to assure that all strings are still
 			// alive in memory when we call our functions further down
 			autoarray<string> stringparams;
@@ -650,18 +684,35 @@ static long double getnumcore()
 				}
 			}
 			foundlabel=true;
+
+			const char *old_start = start;
 			int i=labelval(&start);
+			bool scope_passed = false;
+			bool subscript_passed = false;
+			while (str < start)
+			{
+				if (*str == '.') scope_passed = true;
+				if (*(str++) == '[')
+				{
+					if (subscript_passed)
+					{
+						error("Multiple subscript operators is invalid");
+						break;
+					}
+					subscript_passed = true;
+					if (scope_passed)
+					{
+						error("Invalid array subscript after first scope resolution.");
+						break;
+					}
+					string struct_name = substr(old_start, str - old_start - 1);
+					i += eval(0) * object_size(struct_name);
+				}
+			}
+
 			str=start;
-			//if (start!=str) error("Internal error. Send this patch to Alcaro.");//not gonna add sublabel/macrolabel support here
 			if (i==-1) forwardlabel=true;
 			return (int)i&0xFFFFFF;
-//#define const(name, val) if (!strncasecmp(start, name, len)) return val
-//			const("pi", 3.141592653589793238462);
-//			const("\xCF\x80", 3.141592653589793238462);
-//			const("\xCE\xA0", 3.141592653589793238462);//case insensitive pi, yay
-//			const("e", 2.718281828459045235360);
-//#undef const
-//			error("Unknown constant.");
 		}
 	}
 	error("Invalid number.");
@@ -710,7 +761,7 @@ notposneglabel:
 	long double left=getnum();
 	long double right;
 	while (*str==' ') str++;
-	while (*str && *str!=')' && *str!=',')
+	while (*str && *str != ')' && *str != ','&& *str != ']')
 	{
 		while (*str==' ') str++;
 		if (math_round) left=(int)left;

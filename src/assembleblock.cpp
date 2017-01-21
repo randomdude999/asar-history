@@ -19,6 +19,17 @@ bool specifiedasarver = false;
 
 extern int optimizeforbank;
 
+int old_snespos;
+int old_startpos;
+int old_optimizeforbank;
+int struct_base;
+string struct_name;
+string struct_parent;
+bool in_struct = false;
+bool in_sub_struct = false;
+
+lightweight_map<string, snes_struct> structs;
+
 template<typename t> void error(int neededpass, const char * e_);
 void warn(const char * e);
 
@@ -69,36 +80,12 @@ inline void write1_65816(unsigned int num)
 			movinglabelspossible=true;
 			error(2, S"SNES address $"+hex6(realsnespos)+" doesn't map to ROM");
 		}
-		romdata[pcpos]=num;
+		writeromdata_byte(pcpos, num);
 		if (pcpos>=romlen) romlen=pcpos+1;
 	}
 	step(1);
 	ratsmetastate=ratsmeta_ban;
 }
-
-//inline void write1_generic16(unsigned int num)
-//{
-//	if (pass==2)
-//	{
-//		if (realsnespos&0xFFFF0000) error(2, "Address out of bounds");
-//		int pcpos=realsnespos&0xFFFF;
-//		romdata[pcpos]=num;
-//		if (pcpos>=romlen) romlen=pcpos+1;
-//	}
-//	step(1);
-//}
-
-//inline void write1_generic24(unsigned int num)
-//{
-//	if (pass==2)
-//	{
-//		if (realsnespos&0xFF000000) error(2, "Address out of bounds");
-//		int pcpos=realsnespos&0xFFFFFF;
-//		romdata[pcpos]=num;
-//		if (pcpos>=romlen) romlen=pcpos+1;
-//	}
-//	step(1);
-//}
 
 void write1_pick(unsigned int num)
 {
@@ -156,15 +143,6 @@ void write2(unsigned int num)
 {
 	write1(num);
 	write1(num/256);
-	//if (pass==2)
-	//{
-	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
-	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata_r[pcpos+0]=num    ;
-	//	romdata_r[pcpos+1]=num>> 8;
-	//	if (pcpos+2>romlen) romlen=pcpos+2;
-	//}
-	//step(2);
 }
 
 void write3(unsigned int num)
@@ -172,16 +150,6 @@ void write3(unsigned int num)
 	write1(num);
 	write1(num/256);
 	write1(num/65536);
-	//if (pass==2)
-	//{
-	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
-	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata_r[pcpos+0]=num    ;
-	//	romdata_r[pcpos+1]=num>> 8;
-	//	romdata_r[pcpos+2]=num>>16;
-	//	if (pcpos+3>romlen) romlen=pcpos+3;
-	//}
-	//step(3);
 }
 
 void write4(unsigned int num)
@@ -190,17 +158,6 @@ void write4(unsigned int num)
 	write1(num/256);
 	write1(num/65536);
 	write1(num/16777216);
-	//if (pass==2)
-	//{
-	//	int pcpos=snestopc(realsnespos&0xFFFFFF);
-	//	if (pcpos<0) error(S"SNES address "+hex6(realsnespos)+" doesn't map to ROM");
-	//	romdata_r[pcpos+0]=num    ;
-	//	romdata_r[pcpos+1]=num>> 8;
-	//	romdata_r[pcpos+2]=num>>16;
-	//	romdata_r[pcpos+3]=num>>24;
-	//	if (pcpos+4>romlen) romlen=pcpos+4;
-	//}
-	//step(4);
 }
 
 //these are NOT used by the math parser - see math.cpp for that
@@ -300,7 +257,7 @@ string labelname(const char ** rawname, bool define=false)
 		name=S":macro"+dec(calledmacros)+"_";
 		rawname++;
 	}
-	else
+	else if (!in_struct && !in_sub_struct)
 	{
 		for (i=0;(*rawname=='.');i++) rawname++;
 		if (!isualnum(*rawname)) error(0, "Invalid label name.");
@@ -311,9 +268,44 @@ string labelname(const char ** rawname, bool define=false)
 			name+=S sublabels[i-1]+"_";
 		}
 	}
-	if (!isualnum(*rawname)) error(0, "Invalid label name.");
-	while (isualnum(*rawname))
+
+	if(in_sub_struct)
 	{
+		name += struct_parent + ".";
+	}
+
+	if (in_struct || in_sub_struct)
+	{
+		name += struct_name;
+		name += '.';
+		rawname++;
+	}
+
+	if (!isualnum(*rawname)) error(0, "Invalid label name.");
+
+	while (isualnum(*rawname) || *rawname == '.' || *rawname == '[')
+	{
+		if(!in_struct && !in_sub_struct && *rawname == '[')
+		{
+			bool invalid = true;
+			while (isprint(*rawname))
+			{
+				if (*(rawname++) == ']')
+				{
+					invalid = false;
+					break;
+				}
+			}
+			if (invalid)
+			{
+				error(0, "Invalid label name, missing array closer.");
+			}
+		}
+		else if (*rawname == '{')
+		{
+			error(0, "Array syntax invalid inside structs.");
+		}
+
 		name+=*(rawname++);
 	}
 	if (define && i>=0)
@@ -417,7 +409,9 @@ void setlabel(string name, int loc=-1)
 	}
 }
 
-unsigned int table[256];
+
+chartabledata table;
+autoarray<chartabledata> tablestack;
 
 int freespacepos[256];
 int freespacelen[256];
@@ -437,7 +431,7 @@ unsigned char freespacebyte[256];
 
 void cleartable()
 {
-	for (int i=0;i<256;i++) table[i]=i;
+	for (int i=0;i<256;i++) table.table[i]=i;
 }
 
 struct pushable {
@@ -560,7 +554,8 @@ void initstuff()
 void finishpass()
 {
 //defines.traverse(nerf);
-	if (pushpcnum && pass==0) nullerror("pushpc without matching pullpc");
+	if (in_struct || in_sub_struct) nullerror("struct without matching endstruct.");
+	else if (pushpcnum && pass == 0) nullerror("pushpc without matching pullpc.");
 	freespaceend();
 	if (arch==arch_65816) asend_65816();
 	if (arch==arch_spc700) asend_spc700();
@@ -574,7 +569,7 @@ bool addlabel(const char * label, int pos=-1)
 	if (label[0]=='-' || label[0]=='+')
 	{
 		int i;
-		for (i=0;label[i];i++) if (label[i]!=label[0]) error(0, "Broken label definition");
+		for (i=0;label[i];i++) if (label[i]!=label[0]) error(0, "Broken label definition.");
 		if (label[0]=='+') setlabel(S":pos_"+dec(i)+"_"+dec(poslabels[i]++), pos);
 		else               setlabel(S":neg_"+dec(i)+"_"+dec(++neglabels[i]), pos);
 		return true;
@@ -582,7 +577,7 @@ bool addlabel(const char * label, int pos=-1)
 	if (label[strlen(label)-1]==':' || label[0]=='.' || label[0]=='?')
 	{
 		if (!label[1]) return false;
-		bool requirecolon=(label[0]!='.');
+		bool requirecolon = (label[0] != '.') && (in_struct || in_sub_struct);
 		string name=labelname(&label, label[0]!='?');
 		if (label[0]==':') label++;
 		else if (requirecolon) error(0, "Broken label definition");
@@ -613,6 +608,33 @@ extern int callerline;
 extern int macrorecursion;
 
 int freespaceuse=0;
+
+
+void push_pc()
+{
+	pushpc[pushpcnum].arch=arch;
+	pushpc[pushpcnum].snespos=snespos;
+	pushpc[pushpcnum].snesstart=startpos;
+	pushpc[pushpcnum].snesposreal=realsnespos;
+	pushpc[pushpcnum].snesstartreal=realstartpos;
+	pushpc[pushpcnum].freeid=freespaceid;
+	pushpc[pushpcnum].freeex=freespaceextra;
+	pushpc[pushpcnum].freest=freespacestart;
+	pushpcnum++;
+}
+
+void pop_pc()
+{
+	pushpcnum--;
+	snespos=pushpc[pushpcnum].snespos;
+	startpos=pushpc[pushpcnum].snesstart;
+	realsnespos=pushpc[pushpcnum].snesposreal;
+	realstartpos=pushpc[pushpcnum].snesstartreal;
+	freespaceid=pushpc[pushpcnum].freeid;
+	freespaceextra=pushpc[pushpcnum].freeex;
+	freespacestart=pushpc[pushpcnum].freest;
+}
+
 
 void resolvedefines(string& out, const char * start);
 
@@ -910,6 +932,14 @@ void assembleblock(const char * block)
 			else fatalerror("This file may not be used as the main file.");
 		}
 	}
+	else if (is0("@"))
+	{
+		// Stand-alone @, just ignore this
+	}
+	else if (numwords > 0 && word[0][0] == '@')
+	{
+		warn0(S"unrecognized special command - your version of Asar might be outdated.");
+	}
 	else if (is1("db") || is1("dw") || is1("dl") || is1("dd"))
 	{
 		int len;
@@ -927,10 +957,10 @@ void assembleblock(const char * block)
 						warn0("If you want to assemble an xkas patch, add ;@xkas at the top or you may run into a couple of problems.");
 				for (unsigned char * str=(unsigned char*)dequote(pars[i]);*str;str++)
 				{
-					if (len==1) write1(table[*str]);
-					if (len==2) write2(table[*str]);
-					if (len==3) write3(table[*str]);
-					if (len==4) write4(table[*str]);
+					if (len==1) write1(table.table[*str]);
+					if (len==2) write2(table.table[*str]);
+					if (len==3) write3(table.table[*str]);
+					if (len==4) write4(table.table[*str]);
 				}
 			}
 			else
@@ -949,7 +979,7 @@ void assembleblock(const char * block)
 	{
 		if (word[0][0]=='\'' && word[0][1] && word[0][2]=='\'' && word[0][3]=='\0')
 		{
-			table[(unsigned char)word[0][1]]=getnum(word[2]);
+			table.table[(unsigned char)word[0][1]]=getnum(word[2]);
 			return;
 		}
 		int num=getnum(word[2]);
@@ -963,13 +993,96 @@ void assembleblock(const char * block)
 		int num=getnum(par);
 		if (forwardlabel) error(0, "org Label is only valid for labels earlier in the patch");
 		if (num&~0xFFFFFF) error(1, "Address out of bounds");
-		if (mapper==lorom && (num&0x408000)==0x400000) warn0("It would be wise to set the 008000 bit of this address.");
+		if ((mapper==lorom || mapper==exlorom) && (num&0x408000)==0x400000) warn0("It would be wise to set the 008000 bit of this address.");
 		//if (fastrom) num|=0x800000;
 		snespos=num;
 		realsnespos=num;
 		startpos=num;
 		realstartpos=num;
 	}
+#define ret_error(message) { error(0, message); return; }
+	else if (is("struct"))
+	{
+		if (in_struct || in_sub_struct) ret_error("Can not nest structs.");
+		if (numwords < 2) ret_error("Missing struct parameters.");
+		if (numwords > 4) ret_error("Too many struct parameters.");
+		if (!confirmname(word[1])) ret_error("Invalid struct name.");
+
+		snes_struct structure;
+		if (structs.find(word[1], structure) && pass == 0) ret_error("Struct already exists, choose a different name.");
+
+		old_snespos = snespos;
+		old_startpos = startpos;
+		old_optimizeforbank = optimizeforbank;
+
+		in_struct = numwords == 2 || numwords == 3;
+		in_sub_struct = numwords == 4;
+
+		if (numwords == 3)
+		{
+			int base = getnum(word[2]);
+			if (base&~0xFFFFFF) ret_error("Address out of bounds.");
+			snespos = base;
+			startpos = base;
+		}
+		else if (numwords == 4)
+		{
+			if (strcasecmp(word[2], "extends")) ret_error("Missing extends keyword.");
+			if (!confirmname(word[3])) ret_error("Invalid parent name.");
+			struct_parent = word[3];
+
+			if (!structs.find(struct_parent, structure)) ret_error("Parent struct does not exist.");
+
+			snespos = structure.base_end;
+			startpos = structure.base_end;
+		}
+
+		push_pc();
+
+		optimizeforbank = -1;
+
+		struct_name = word[1];
+		struct_base = snespos;
+	}
+	else if (is("endstruct"))
+	{
+		if (numwords != 1 && numwords != 3) ret_error("Invalid endstruct parameter count.");
+		if (numwords == 3 && strcasecmp(word[1], "align")) ret_error("Expected align parameter.");
+		if (!in_struct && !in_sub_struct) ret_error("endstruct can only be used in combination with struct.");
+
+		int alignment = numwords == 3 ? getnum(word[2]) : 1;
+		if (alignment < 1) ret_error("Alignment must be >= 1.");
+
+		snes_struct structure;
+		structure.base_end = snespos;
+		structure.struct_size = alignment * ((snespos - struct_base + alignment - 1) / alignment);
+		structure.object_size = structure.struct_size;
+
+		if (in_struct)
+		{
+			structs.insert(struct_name, structure);
+		}
+		else if (in_sub_struct)
+		{
+			snes_struct parent;
+			structs.find(struct_parent, parent);
+
+			if (parent.object_size < parent.struct_size + structure.struct_size) {
+				parent.object_size = parent.struct_size + structure.struct_size;
+			}
+
+			structs.insert(struct_parent + "." + struct_name, structure);
+			structs.insert(struct_parent, parent);
+		}
+
+		pop_pc();
+		in_struct = false;
+		in_sub_struct = false;
+		snespos = old_snespos;
+		startpos = old_startpos;
+		optimizeforbank = old_optimizeforbank;
+	}
+#undef ret_error
 	else if (is1("base"))
 	{
 		if (!stricmp(par, "off"))
@@ -1052,7 +1165,7 @@ void assembleblock(const char * block)
 			}
 		}
 		if (useram==-1) error(0, "Invalid freespace request.");
-		if (mapper==hirom && useram) error(0, "No banks contain the RAM mirrors in hirom.");
+		if ((mapper==hirom || mapper==exhirom) && useram) error(0, "No banks contain the RAM mirrors in hirom or exhirom.");
 		if (mapper==norom) error(0, "Can't find freespace in norom.");
 		freespaceend();
 		freespaceid=getfreespaceid();
@@ -1153,7 +1266,9 @@ void assembleblock(const char * block)
 				{
 					int start=ratsstart(num);
 					if (start>=num || start<0)
+					{
 						error(2, "Don't autoclean a label at the end of a freespace block, you'll remove some stuff you're not supposed to remove.");
+					}
 				}
 				//freespaceorglen[targetid]=read2(ratsloc-4)+1;
 				freespaceorgpos[targetid]=ratsloc;
@@ -1332,7 +1447,7 @@ void assembleblock(const char * block)
 				int offset=snestopc(pos);
 				if (offset+end-start>0xFFFFFF) error(0, "Can't create ROMs larger than 16MB");
 				if (offset+end-start>romlen) romlen=offset+end-start;
-				if (pass==2) memcpy(romdata+offset, data+start, end-start);
+				if (pass==2) writeromdata(offset, data+start, end-start);
 			}
 			else
 			{
@@ -1345,7 +1460,7 @@ void assembleblock(const char * block)
 					int freespaceid=getfreespaceid();
 					freespacepos[freespaceid]=pctosnes(pos)|(/*fastrom?0x800000:*/0x000000)|(freespaceid<<24);
 					setlabel(word[3], freespacepos[freespaceid]);
-					memset(romdata+pos, 0xFF, end-start);
+					writeromdata_bytes(pos, 0xFF, end-start);
 				}
 				if (pass==1)
 				{
@@ -1355,7 +1470,7 @@ void assembleblock(const char * block)
 				{
 					int freespaceid=getfreespaceid();
 					if (freespaceleak[freespaceid]) warn2("This freespace appears to be leaked.");
-					memcpy(romdata+snestopc(freespacepos[freespaceid]&0xFFFFFF), data+start, end-start);
+					writeromdata(snestopc(freespacepos[freespaceid]&0xFFFFFF), data+start, end-start);
 					freespaceuse+=8+end-start;
 				}
 			}
@@ -1375,6 +1490,16 @@ void assembleblock(const char * block)
 	{
 		cleartable();
 	}
+	else if (is0("pushtable"))
+	{
+		tablestack.append(table);
+	}
+	else if (is0("pulltable"))
+	{
+		if (tablestack.count<=0) error(0, "using pulltable when there is no table on the stack yet");
+		table=tablestack[tablestack.count-1];
+		tablestack.remove(tablestack.count-1);
+	}
 	else if (is1("table"))
 	{
 		bool fliporder=false;
@@ -1385,7 +1510,7 @@ void assembleblock(const char * block)
 		autoptr<char*> tablecontents=readfile(name);
 		if (!tablecontents) error(0, "File not found");
 		autoptr<char**> tablelines=split(tablecontents, "\n");
-		for (int i=0;i<256;i++) table[i]=((numopcodes+read2(0x00FFDE)+i)*0x26594131)|0x40028020;
+		for (int i=0;i<256;i++) table.table[i]=((numopcodes+read2(0x00FFDE)+i)*0x26594131)|0x40028020;
 			//garbage value so people will notice they're doing it wrong (for bonus points: figure out what 0x26594131 is)
 		for (int i=0;tablelines[i];i++)
 		{
@@ -1396,7 +1521,7 @@ void assembleblock(const char * block)
 			{
 				if (tableline[3]=='x' || tableline[3]=='X') error(0, "Invalid table file");
 				char * end;
-				table[(unsigned char)tableline[0]]=strtol(tableline+2, &end, 16);
+				table.table[(unsigned char)tableline[0]]=strtol(tableline+2, &end, 16);
 				if (*end) error(0, "Invalid table file");
 			}
 			else
@@ -1405,7 +1530,7 @@ void assembleblock(const char * block)
 				char * eq;
 				unsigned int val=strtol(tableline, &eq, 16);
 				if (eq[0]!='=' || eq[2]) error(0, "Invalid table file");
-				table[(unsigned char)eq[1]]=val;
+				table.table[(unsigned char)eq[1]]=val;
 			}
 			//if (strlen(tableline)!=4 || tableline[eqoff]!='=' || !ctype_xdigit(tableline+hexoff, 2)) error(0, "Invalid table file");
 			//table[(unsigned char)tableline[charoff]]=strtol(tableline+hexoff, NULL, 16);
@@ -1523,7 +1648,7 @@ void assembleblock(const char * block)
 			int end=snestopc(num);
 			int start=snestopc(snespos);
 			int len=end-start;
-			for (int i=0;i<len;i++) romdata[start+i]=padbyte[i%12];
+			for (int i=0;i<len;i++) writeromdata_byte(start+i, padbyte[i%12]);
 			snespos=num;
 		}
 	}
@@ -1605,6 +1730,14 @@ bool assemblemapper(char** word, int numwords)
 	{
 		//xkas makes this point to $C00000
 		mapper=hirom;
+	}
+	else if (is0("exlorom"))
+	{
+		mapper = exlorom;
+	}
+	else if (is0("exhirom"))
+	{
+		mapper=exhirom;
 	}
 	else if (is0("sfxrom"))
 	{

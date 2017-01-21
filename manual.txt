@@ -226,12 +226,17 @@ New commands:
 - sa1rom: Implements the SA-1 mapper. To tell which banks are mapped in, use sa1rom 0,1,4,6 (maximum
   is 7); the default is 0,1,2,3.
 - sfxrom: Tells Asar to use the SuperFX mapper.
+- exlorom: Implements the ExLoROM mapper.
+- exhirom: Implements the ExHiROM mapper.
 - @asar: Demands a minimum version of Asar for assembling the patch. Since Asar is constantly
   evolving, this is a way to tell the user why the patch breaks.
 - @include, @includefrom: Tells that an asm file may not be assembled directly, but must be included
   from another file. @includefrom tells which file it's supposed to be included from, though it
   doesn't verify that it really is included from this file. It's just a sanity check.
 - ;@xkas: Enters xkas emulation mode.
+- struct/endstruct: used to define a struct, which are basically just a convenient and easier-to-read way
+  of accessing tables. The code for this was written by p4plus2 and I really can't explain it well, so
+  just take a look at src/tests/structs.asm for usage examples.
 
 Conditionals:
 Conditionals allow a piece of code to only be assembled under certain circumstances. The syntax of a
