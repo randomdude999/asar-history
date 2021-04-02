@@ -1,3 +1,28 @@
+# Asar history
+
+This repo is a mirror of [the main Asar repository](https://github.com/RPGHacker/asar), but with some extra commits spliced onto the start of the Git history, corresponding to releases of Asar from before we used Git. This is useful for getting a bit more context on old `git blame`s, or just digging around in old code.
+
+Update process to sync with new commits in Asar:
+
+* clone RPGHacker:master to the `main` branch (might need some amount of --force)
+* `git replace --graft b6139957 old-releases` (first commit of the real tree, grafted on to the last commit of the fabricated tree)
+* `git checkout main`
+* `git filter-branch`
+* Redo the readme edit
+
+Update process to add another old version of Asar to the tree:
+
+* Checkout the commit right before where the new version would go (or `git checkout --orphan random-branch-name` to add one before the first), also write down the commit right after the new version
+* Delete everything in the working directory
+* Copy over the source from whichever zip you got it from
+* `git add .`
+* `git commit --author "Author Name" --date "timestamp in ISO8601" --no-gpg-sign` (if this author hasn't commited anything to asar yet, you also need to provide an email, like `"Name <email@example.com>"`, if Git has seen this name before then it can figure the email out by itself)
+* `git replace --graft <next commit hash> HEAD` (use the commit hash that's supposed to be right after the inserted commit - i told you to write it down)
+* `git checkout main`
+* `git filter-branch --env-filter 'export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"'`
+* make sure the `old-releases` branch points to the right commit (not sure if filter-branch will get this right)
+* force-push the new `main` and `old-releases` branches
+
 # Asar
 [![Travis build](https://travis-ci.org/RPGHacker/asar.svg?branch=master)](https://travis-ci.org/RPGHacker/asar) [![Appveyor build](https://ci.appveyor.com/api/projects/status/github/RPGHacker/asar?svg=true)](https://ci.appveyor.com/project/RPGHacker/asar)
 
